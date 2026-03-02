@@ -41,6 +41,14 @@ logger = get_logger(__name__)
 # Instantiate manager
 conversation_manager = ConversationManager()
 
+# Prefix used by agent IDs (PrimitiveType.AGENT.value + "-")
+_AGENT_ID_PREFIX = "agent-"
+
+
+def _is_agent_id(conversation_id: str) -> bool:
+    """Check if a conversation_id is actually an agent ID (agent-direct messaging)."""
+    return conversation_id.startswith(_AGENT_ID_PREFIX)
+
 
 @router.post("/", response_model=Conversation, operation_id="create_conversation")
 async def create_conversation(
@@ -172,8 +180,26 @@ async def list_conversation_messages(
 
     Returns LettaMessage objects (UserMessage, AssistantMessage, etc.) for all
     messages in the conversation, with support for cursor-based pagination.
+
+    If ``conversation_id`` is an agent ID (``agent-<uuid>``), returns the
+    agent's default conversation message history.
     """
     actor = await server.user_manager.get_actor_or_default_async(actor_id=headers.actor_id)
+
+    # Agent-direct messaging: list messages from the agent's default history
+    if _is_agent_id(conversation_id):
+        return await server.get_agent_recall_async(
+            agent_id=conversation_id,
+            actor=actor,
+            after=after,
+            before=before,
+            limit=limit,
+            reverse=(order == "desc"),
+            return_message_object=False,
+            group_id=group_id,
+            include_err=include_err,
+        )
+
     return await conversation_manager.list_conversation_messages(
         conversation_id=conversation_id,
         actor=actor,
@@ -212,12 +238,81 @@ async def send_conversation_message(
     This endpoint sends a message to an existing conversation.
     By default (streaming=true), returns a streaming response (Server-Sent Events).
     Set streaming=false to get a complete JSON response.
+
+    If ``conversation_id`` is an agent ID (``agent-<uuid>``), the message is
+    sent directly to the agent's default conversation (agent-direct messaging).
     """
     actor = await server.user_manager.get_actor_or_default_async(actor_id=headers.actor_id)
 
     if not request.messages or len(request.messages) == 0:
         raise HTTPException(status_code=422, detail="Messages must not be empty")
 
+    # --- Agent-direct messaging: treat agent-* IDs as the default conversation ---
+    if _is_agent_id(conversation_id):
+        agent_id = conversation_id  # conversation_id IS the agent ID
+
+        if request.streaming:
+            streaming_request = LettaStreamingRequest(
+                messages=request.messages,
+                streaming=True,
+                stream_tokens=request.stream_tokens,
+                include_pings=request.include_pings,
+                background=request.background,
+                max_steps=request.max_steps,
+                use_assistant_message=request.use_assistant_message,
+                assistant_message_tool_name=request.assistant_message_tool_name,
+                assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+                include_return_message_types=request.include_return_message_types,
+                override_model=request.override_model,
+                client_tools=request.client_tools,
+            )
+            streaming_service = StreamingService(server)
+            run, result = await streaming_service.create_agent_stream(
+                agent_id=agent_id,
+                actor=actor,
+                request=streaming_request,
+                run_type="send_message",
+            )
+            return result
+
+        # Non-streaming agent-direct path
+        agent = await server.agent_manager.get_agent_by_id_async(
+            agent_id,
+            actor,
+            include_relationships=["memory", "multi_agent_group", "sources", "tool_exec_environment_variables", "tools", "tags"],
+        )
+        if request.override_model:
+            override_llm_config = await server.get_llm_config_from_handle_async(actor=actor, handle=request.override_model)
+            agent = agent.model_copy(update={"llm_config": override_llm_config})
+
+        run = None
+        if settings.track_agent_run:
+            runs_manager = RunManager()
+            run = await runs_manager.create_run(
+                pydantic_run=PydanticRun(
+                    agent_id=agent_id,
+                    background=False,
+                    metadata={"run_type": "send_message"},
+                    request_config=LettaRequestConfig.from_letta_request(request),
+                ),
+                actor=actor,
+            )
+
+        redis_client = await get_redis_client()
+        await redis_client.set(f"{REDIS_RUN_ID_PREFIX}:{agent_id}", run.id if run else None)
+
+        agent_loop = AgentLoop.load(agent_state=agent, actor=actor)
+        return await agent_loop.step(
+            request.messages,
+            max_steps=request.max_steps,
+            run_id=run.id if run else None,
+            use_assistant_message=request.use_assistant_message,
+            include_return_message_types=request.include_return_message_types,
+            client_tools=request.client_tools,
+            include_compaction_messages=request.include_compaction_messages,
+        )
+
+    # --- Standard conversation path ---
     conversation = await conversation_manager.get_conversation_by_id(
         conversation_id=conversation_id,
         actor=actor,
@@ -351,18 +446,30 @@ async def retrieve_conversation_stream(
 
     This endpoint allows you to reconnect to an active background stream
     for a conversation, enabling recovery from network interruptions.
+
+    If ``conversation_id`` is an agent ID (``agent-<uuid>``), resumes the
+    stream for the agent's most recent active run.
     """
     actor = await server.user_manager.get_actor_or_default_async(actor_id=headers.actor_id)
     runs_manager = RunManager()
 
-    # Find the most recent active run for this conversation
-    active_runs = await runs_manager.list_runs(
-        actor=actor,
-        conversation_id=conversation_id,
-        statuses=[RunStatus.created, RunStatus.running],
-        limit=1,
-        ascending=False,
-    )
+    # Find the most recent active run — by agent_id for agent-direct, or by conversation_id
+    if _is_agent_id(conversation_id):
+        active_runs = await runs_manager.list_runs(
+            actor=actor,
+            agent_id=conversation_id,
+            statuses=[RunStatus.created, RunStatus.running],
+            limit=1,
+            ascending=False,
+        )
+    else:
+        active_runs = await runs_manager.list_runs(
+            actor=actor,
+            conversation_id=conversation_id,
+            statuses=[RunStatus.created, RunStatus.running],
+            limit=1,
+            ascending=False,
+        )
 
     if not active_runs:
         raise LettaInvalidArgumentError("No active runs found for this conversation.")

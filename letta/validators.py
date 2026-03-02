@@ -45,21 +45,30 @@ PATH_VALIDATORS = {primitive_type.value: _create_path_validator_factory(primitiv
 
 
 def _create_conversation_id_or_default_path_validator_factory():
-    """Conversation IDs accept the usual primitive format or the special value 'default'."""
+    """Conversation IDs accept the usual primitive format, the special value 'default', or an agent ID for agent-direct messaging."""
 
     primitive = PrimitiveType.CONVERSATION.value
+    agent_primitive = PrimitiveType.AGENT.value
     prefix_pattern = PRIMITIVE_ID_PATTERNS[primitive].pattern
-    # Make the full regex accept either the primitive ID format or 'default'.
-    # `prefix_pattern` already contains the ^...$ anchors.
-    conversation_or_default_pattern = f"^(default|{prefix_pattern[1:-1]})$"
+    agent_pattern = PRIMITIVE_ID_PATTERNS[agent_primitive].pattern
+    # Make the full regex accept the primitive ID format, 'default', or an agent ID.
+    # `prefix_pattern` and `agent_pattern` already contain ^...$ anchors.
+    conversation_or_default_pattern = f"^(default|{prefix_pattern[1:-1]}|{agent_pattern[1:-1]})$"
+
+    # max_length must accommodate the longest format (agent-<uuid> = 42 chars)
+    max_len = max(len(primitive), len(agent_primitive)) + 1 + 36
 
     def factory():
         return Path(
-            description=(f"The conversation identifier. Either the special value 'default' or an ID in the format '{primitive}-<uuid4>'"),
+            description=(
+                f"The conversation identifier. Either the special value 'default', "
+                f"an ID in the format '{primitive}-<uuid4>', or an agent ID in the "
+                f"format '{agent_primitive}-<uuid4>' for agent-direct messaging."
+            ),
             pattern=conversation_or_default_pattern,
-            examples=["default", f"{primitive}-123e4567-e89b-42d3-8456-426614174000"],
+            examples=["default", f"{primitive}-123e4567-e89b-42d3-8456-426614174000", f"{agent_primitive}-123e4567-e89b-42d3-8456-426614174000"],
             min_length=1,
-            max_length=len(primitive) + 1 + 36,
+            max_length=max_len,
         )
 
     return factory
