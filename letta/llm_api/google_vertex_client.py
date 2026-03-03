@@ -11,7 +11,10 @@ from google.genai.types import (
     FunctionCallingConfig,
     FunctionCallingConfigMode,
     GenerateContentResponse,
+    HarmBlockThreshold,
+    HarmCategory,
     HttpOptions,
+    SafetySetting,
     ThinkingConfig,
     ToolConfig,
 )
@@ -459,11 +462,21 @@ class GoogleVertexClient(LLMClientBase):
             ),
         )
 
+        # Disable all safety filters to prevent false-positive content blocking
+        safety_settings = [
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.OFF),
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.OFF),
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=HarmBlockThreshold.OFF),
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=HarmBlockThreshold.OFF),
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold=HarmBlockThreshold.OFF),
+        ]
+
         request_data = {
             "contents": contents,
             "config": {
                 "temperature": llm_config.temperature,
                 "tools": formatted_tools,
+                "safety_settings": [s.model_dump() for s in safety_settings],
             },
         }
         # Make tokens is optional
