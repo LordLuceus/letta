@@ -7,6 +7,7 @@ if TYPE_CHECKING:
 from sqlalchemy import and_, asc, delete, desc, func, nulls_last, or_, select
 
 from letta.errors import LettaInvalidArgumentError
+from letta.helpers.datetime_helpers import get_utc_time
 from letta.orm.agent import Agent as AgentModel
 from letta.orm.block import Block as BlockModel
 from letta.orm.blocks_conversations import BlocksConversations
@@ -28,6 +29,21 @@ from letta.utils import enforce_types
 
 class ConversationManager:
     """Manager class to handle business logic related to Conversations."""
+
+    @staticmethod
+    def _serialize_model_settings(model_settings) -> Optional[dict]:
+        """Serialize model settings for DB storage, stripping max_output_tokens if not explicitly set.
+
+        Uses model_dump() to preserve all fields (including the provider_type discriminator),
+        but removes max_output_tokens when it wasn't explicitly provided by the caller so we
+        don't persist the Pydantic default (4096) and later overwrite the agent's own value.
+        """
+        if model_settings is None:
+            return None
+        data = model_settings.model_dump()
+        if "max_output_tokens" not in model_settings.model_fields_set:
+            data.pop("max_output_tokens", None)
+        return data
 
     @enforce_types
     @trace_method
@@ -56,7 +72,7 @@ class ConversationManager:
                 summary=conversation_create.summary,
                 organization_id=actor.organization_id,
                 model=conversation_create.model,
-                model_settings=conversation_create.model_settings.model_dump() if conversation_create.model_settings else None,
+                model_settings=self._serialize_model_settings(conversation_create.model_settings),
             )
             await conversation.create_async(session, actor=actor)
 
@@ -73,7 +89,101 @@ class ConversationManager:
 
             pydantic_conversation = conversation.to_pydantic()
             pydantic_conversation.isolated_block_ids = isolated_block_ids
-            return pydantic_conversation
+
+        # Compile and persist the initial system message for this conversation
+        # This ensures the conversation captures the latest memory block state at creation time
+        await self.compile_and_save_system_message_for_conversation(
+            conversation_id=pydantic_conversation.id,
+            agent_id=agent_id,
+            actor=actor,
+        )
+
+        return pydantic_conversation
+
+    @trace_method
+    async def compile_and_save_system_message_for_conversation(
+        self,
+        conversation_id: str,
+        agent_id: str,
+        actor: PydanticUser,
+        agent_state: Optional["AgentState"] = None,
+        message_manager: Optional[object] = None,
+    ) -> PydanticMessage:
+        """Compile and persist the initial system message for a conversation.
+
+        This recompiles the system prompt with the latest memory block values
+        and metadata, ensuring the conversation starts with an up-to-date
+        system message.
+
+        This is the single source of truth for creating a conversation's system
+        message — used both at conversation creation time and as a fallback
+        when a conversation has no messages yet.
+
+        Args:
+            conversation_id: The conversation to add the system message to
+            agent_id: The agent this conversation belongs to
+            actor: The user performing the action
+            agent_state: Optional pre-loaded agent state (avoids redundant DB load)
+            message_manager: Optional pre-loaded MessageManager instance
+
+        Returns:
+            The persisted system message
+        """
+        # Lazy imports to avoid circular dependencies
+        from letta.prompts.prompt_generator import PromptGenerator
+        from letta.services.message_manager import MessageManager
+        from letta.services.passage_manager import PassageManager
+
+        if message_manager is None:
+            message_manager = MessageManager()
+
+        if agent_state is None:
+            from letta.services.agent_manager import AgentManager
+
+            agent_state = await AgentManager().get_agent_by_id_async(
+                agent_id=agent_id,
+                include_relationships=["memory", "sources"],
+                actor=actor,
+            )
+
+        passage_manager = PassageManager()
+        num_messages = await message_manager.size_async(actor=actor, agent_id=agent_id)
+        num_archival_memories = await passage_manager.agent_passage_size_async(actor=actor, agent_id=agent_id)
+
+        # Compile the system message with current memory state
+        system_message_str = await PromptGenerator.compile_system_message_async(
+            system_prompt=agent_state.system,
+            in_context_memory=agent_state.memory,
+            in_context_memory_last_edit=get_utc_time(),
+            timezone=agent_state.timezone,
+            user_defined_variables=None,
+            append_icm_if_missing=True,
+            previous_message_count=num_messages,
+            archival_memory_size=num_archival_memories,
+            sources=agent_state.sources,
+            max_files_open=agent_state.max_files_open,
+        )
+
+        system_message = PydanticMessage.dict_to_message(
+            agent_id=agent_id,
+            model=agent_state.llm_config.model,
+            openai_message_dict={"role": "system", "content": system_message_str},
+        )
+
+        # Persist the new system message
+        persisted_messages = await message_manager.create_many_messages_async([system_message], actor=actor)
+        system_message = persisted_messages[0]
+
+        # Add it to the conversation tracking at position 0
+        await self.add_messages_to_conversation(
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            message_ids=[system_message.id],
+            actor=actor,
+            starting_position=0,
+        )
+
+        return system_message
 
     @enforce_types
     @trace_method
@@ -133,22 +243,15 @@ class ConversationManager:
             if sort_by == "last_run_completion":
                 # Subquery to get the latest completed_at for each conversation
                 latest_run_subquery = (
-                    select(
-                        RunModel.conversation_id,
-                        func.max(RunModel.completed_at).label("last_run_completion")
-                    )
+                    select(RunModel.conversation_id, func.max(RunModel.completed_at).label("last_run_completion"))
                     .where(RunModel.conversation_id.isnot(None))
                     .group_by(RunModel.conversation_id)
                     .subquery()
                 )
 
                 # Join conversations with the subquery
-                stmt = (
-                    select(ConversationModel)
-                    .outerjoin(
-                        latest_run_subquery,
-                        ConversationModel.id == latest_run_subquery.c.conversation_id
-                    )
+                stmt = select(ConversationModel).outerjoin(
+                    latest_run_subquery, ConversationModel.id == latest_run_subquery.c.conversation_id
                 )
                 sort_column = latest_run_subquery.c.last_run_completion
                 sort_nulls_last = True
@@ -170,10 +273,12 @@ class ConversationManager:
 
             # Add summary search filter if provided
             if summary_search:
-                conditions.extend([
-                    ConversationModel.summary.isnot(None),
-                    ConversationModel.summary.contains(summary_search),
-                ])
+                conditions.extend(
+                    [
+                        ConversationModel.summary.isnot(None),
+                        ConversationModel.summary.contains(summary_search),
+                    ]
+                )
 
             stmt = stmt.where(and_(*conditions))
 
@@ -182,10 +287,7 @@ class ConversationManager:
                 # Get the sort value for the cursor conversation
                 if sort_by == "last_run_completion":
                     cursor_query = (
-                        select(
-                            ConversationModel.id,
-                            func.max(RunModel.completed_at).label("last_run_completion")
-                        )
+                        select(ConversationModel.id, func.max(RunModel.completed_at).label("last_run_completion"))
                         .outerjoin(RunModel, ConversationModel.id == RunModel.conversation_id)
                         .where(ConversationModel.id == after)
                         .group_by(ConversationModel.id)
@@ -198,16 +300,11 @@ class ConversationManager:
                             # Cursor is at NULL - if ascending, get non-NULLs or NULLs with greater ID
                             if ascending:
                                 stmt = stmt.where(
-                                    or_(
-                                        and_(sort_column.is_(None), ConversationModel.id > after_id),
-                                        sort_column.isnot(None)
-                                    )
+                                    or_(and_(sort_column.is_(None), ConversationModel.id > after_id), sort_column.isnot(None))
                                 )
                             else:
                                 # If descending, get NULLs with smaller ID
-                                stmt = stmt.where(
-                                    and_(sort_column.is_(None), ConversationModel.id < after_id)
-                                )
+                                stmt = stmt.where(and_(sort_column.is_(None), ConversationModel.id < after_id))
                         else:
                             # Cursor is at non-NULL
                             if ascending:
@@ -217,8 +314,8 @@ class ConversationManager:
                                         sort_column.isnot(None),
                                         or_(
                                             sort_column > after_sort_value,
-                                            and_(sort_column == after_sort_value, ConversationModel.id > after_id)
-                                        )
+                                            and_(sort_column == after_sort_value, ConversationModel.id > after_id),
+                                        ),
                                     )
                                 )
                             else:
@@ -227,7 +324,7 @@ class ConversationManager:
                                     or_(
                                         sort_column.is_(None),
                                         sort_column < after_sort_value,
-                                        and_(sort_column == after_sort_value, ConversationModel.id < after_id)
+                                        and_(sort_column == after_sort_value, ConversationModel.id < after_id),
                                     )
                                 )
                 else:
@@ -277,7 +374,11 @@ class ConversationManager:
             for key, value in update_data.items():
                 # model_settings needs to be serialized to dict for the JSON column
                 if key == "model_settings" and value is not None:
-                    setattr(conversation, key, conversation_update.model_settings.model_dump() if conversation_update.model_settings else value)
+                    setattr(
+                        conversation,
+                        key,
+                        self._serialize_model_settings(conversation_update.model_settings) if conversation_update.model_settings else value,
+                    )
                 else:
                     setattr(conversation, key, value)
 

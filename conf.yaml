@@ -260,6 +260,7 @@ model:
     base_url: https://generativelanguage.googleapis.com/
     force_minimum_thinking_budget: false
     max_retries: 5
+    timeout_seconds: 600.0
 
   # Google Vertex (-> GOOGLE_CLOUD_*)
   # google_cloud:

@@ -1,31 +1,36 @@
 """
-Tests for the ConversationId validator extension that accepts agent-* IDs
-for agent-direct messaging (compatibility with Letta Code >= 0.16.13).
+Tests for the ConversationIdOrDefault validator that accepts agent-* IDs
+and 'default' for agent-direct messaging (compatibility with Letta Code >= 0.16.13).
+
+Upstream uses ConversationIdOrDefault (separate from plain ConversationId)
+for endpoints that support agent-direct mode.
 """
 
 import re
+from typing import get_args
 
 import pytest
 from annotated_types import MaxLen, MinLen
 
 from letta.schemas.enums import PrimitiveType
-from letta.validators import PRIMITIVE_ID_PATTERNS, PATH_VALIDATORS
+from letta.validators import PRIMITIVE_ID_PATTERNS, ConversationIdOrDefault
 
 
-def _get_conversation_id_path():
-    """Get a fresh ConversationId Path validator instance."""
-    factory = PATH_VALIDATORS[PrimitiveType.CONVERSATION.value]
-    return factory()
+def _get_conversation_id_or_default_path():
+    """Get the Path validator from the ConversationIdOrDefault type alias."""
+    # ConversationIdOrDefault is Annotated[str, Path(...)], so the Path is in __metadata__
+    args = get_args(ConversationIdOrDefault)
+    # args[0] is str, args[1] is the Path validator
+    return args[1]
 
 
-def _get_conversation_id_pattern() -> re.Pattern:
-    """Extract the compiled regex from the ConversationId path validator metadata."""
-    path_obj = _get_conversation_id_path()
-    # Pattern is stored in pydantic metadata as _PydanticGeneralMetadata(pattern=...)
+def _get_conversation_id_or_default_pattern() -> re.Pattern:
+    """Extract the compiled regex from ConversationIdOrDefault path validator metadata."""
+    path_obj = _get_conversation_id_or_default_path()
     for m in path_obj.metadata:
         if hasattr(m, "pattern"):
             return re.compile(m.pattern)
-    raise RuntimeError("Could not find pattern in ConversationId metadata")
+    raise RuntimeError("Could not find pattern in ConversationIdOrDefault metadata")
 
 
 class TestConversationIdValidatorPattern:
@@ -33,7 +38,7 @@ class TestConversationIdValidatorPattern:
 
     @pytest.fixture
     def pattern(self):
-        return _get_conversation_id_pattern()
+        return _get_conversation_id_or_default_pattern()
 
     # --- Valid IDs ---
 
@@ -97,7 +102,7 @@ class TestConversationIdValidatorLengths:
 
     def test_max_length_accommodates_agent_ids(self):
         """agent-<uuid> is 42 chars, conv-<uuid> is 41 chars. Max must be >= 42."""
-        path_obj = _get_conversation_id_path()
+        path_obj = _get_conversation_id_or_default_path()
         max_len = self._get_length_constraint(path_obj, MaxLen)
         agent_id = "agent-123e4567-e89b-42d3-8456-426614174000"
         assert len(agent_id) == 42
@@ -105,7 +110,7 @@ class TestConversationIdValidatorLengths:
 
     def test_min_length_allows_default(self):
         """'default' is 7 chars. Min must be <= 7."""
-        path_obj = _get_conversation_id_path()
+        path_obj = _get_conversation_id_or_default_path()
         min_len = self._get_length_constraint(path_obj, MinLen)
         assert min_len <= len("default")
 

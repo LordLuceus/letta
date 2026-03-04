@@ -21,6 +21,7 @@ from letta.schemas.memory_repo import MemoryCommit
 from letta.schemas.user import User as PydanticUser
 from letta.services.memory_repo.block_markdown import parse_block_markdown, serialize_block
 from letta.services.memory_repo.git_operations import GitOperations
+from letta.services.memory_repo.path_mapping import memory_block_label_from_markdown_path
 from letta.services.memory_repo.storage.local import LocalStorageBackend
 from letta.utils import enforce_types
 
@@ -133,26 +134,29 @@ class MemfsClient:
         except FileNotFoundError:
             return []
 
-        # Convert block files to PydanticBlock (metadata is in frontmatter)
+        # Convert block files to PydanticBlock (metadata is in frontmatter).
+        # skills/{skill_name}/SKILL.md is mapped to block label skills/{skill_name};
+        # other files under skills/ are intentionally ignored.
         blocks = []
         for file_path, content in files.items():
-            if file_path.endswith(".md"):
-                label = file_path[:-3]
+            label = memory_block_label_from_markdown_path(file_path)
+            if label is None:
+                continue
 
-                parsed = parse_block_markdown(content)
+            parsed = parse_block_markdown(content)
 
-                synthetic_uuid = uuid.UUID(hashlib.md5(f"{agent_id}:{label}".encode()).hexdigest())
-                blocks.append(
-                    PydanticBlock(
-                        id=f"block-{synthetic_uuid}",
-                        label=label,
-                        value=parsed["value"],
-                        description=parsed.get("description"),
-                        limit=parsed.get("limit", CORE_MEMORY_BLOCK_CHAR_LIMIT),
-                        read_only=parsed.get("read_only", False),
-                        metadata=parsed.get("metadata", {}),
-                    )
+            synthetic_uuid = uuid.UUID(hashlib.md5(f"{agent_id}:{label}".encode()).hexdigest())
+            blocks.append(
+                PydanticBlock(
+                    id=f"block-{synthetic_uuid}",
+                    label=label,
+                    value=parsed["value"],
+                    description=parsed.get("description"),
+                    limit=parsed.get("limit", CORE_MEMORY_BLOCK_CHAR_LIMIT),
+                    read_only=parsed.get("read_only", False),
+                    metadata=parsed.get("metadata", {}),
                 )
+            )
 
         return blocks
 

@@ -74,7 +74,7 @@ DEFAULT_MAX_STEPS = 50
 
 # context window size
 MIN_CONTEXT_WINDOW = 4096
-DEFAULT_CONTEXT_WINDOW = 32000
+DEFAULT_CONTEXT_WINDOW = 128000
 
 # Summarization trigger threshold (multiplier of context_window limit)
 # Summarization triggers when step usage > context_window * SUMMARIZATION_TRIGGER_MULTIPLIER
@@ -253,10 +253,10 @@ LLM_MAX_CONTEXT_WINDOW = {
     "deepseek-reasoner": 64000,
     # glm (Z.AI)
     "glm-4.5": 128000,
-    "glm-4.6": 200000,
-    "glm-4.7": 200000,
-    "glm-5": 200000,
-    "glm-5-code": 200000,
+    "glm-4.6": 180000,
+    "glm-4.7": 180000,
+    "glm-5": 180000,
+    "glm-5-code": 180000,
     ## OpenAI models: https://platform.openai.com/docs/models/overview
     # gpt-5
     "gpt-5": 272000,
@@ -278,6 +278,8 @@ LLM_MAX_CONTEXT_WINDOW = {
     "gpt-5.2-pro": 272000,
     "gpt-5.2-pro-2025-12-11": 272000,
     "gpt-5.2-codex": 272000,
+    # gpt-5.3
+    "gpt-5.3-codex": 272000,
     # reasoners
     "o1": 200000,
     # "o1-pro": 200000,  # responses API only
@@ -419,7 +421,7 @@ MAX_ERROR_MESSAGE_CHAR_LIMIT = 1000
 # Default memory limits
 CORE_MEMORY_PERSONA_CHAR_LIMIT: int = 20000
 CORE_MEMORY_HUMAN_CHAR_LIMIT: int = 20000
-CORE_MEMORY_BLOCK_CHAR_LIMIT: int = 20000
+CORE_MEMORY_BLOCK_CHAR_LIMIT: int = 100000
 
 # Function return limits
 FUNCTION_RETURN_CHAR_LIMIT = 50000  # ~300 words

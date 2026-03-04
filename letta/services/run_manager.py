@@ -638,7 +638,13 @@ class RunManager:
                 raise NoResultFound(f"Run with id {run_id} not found")
             agent_id = run.agent_id
 
-        logger.debug(f"Cancelling run {run_id} for agent {agent_id}")
+        logger.info(
+            "[Interrupt] Processing cancellation for run=%s, agent=%s, current_status=%s, current_stop_reason=%s",
+            run_id,
+            agent_id,
+            run.status if run else "unknown",
+            run.stop_reason if run else "unknown",
+        )
 
         # Cancellation should be idempotent: if a run is already terminated, treat this as a no-op.
         # This commonly happens when a run finishes between client request and server handling.

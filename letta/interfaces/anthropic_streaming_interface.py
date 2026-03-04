@@ -30,6 +30,7 @@ from anthropic.types.beta import (
 )
 
 from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
+from letta.errors import LLMEmptyResponseError
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
 from letta.log import get_logger
 from letta.schemas.letta_message import (
@@ -103,6 +104,10 @@ class AnthropicStreamingInterface:
         self.tool_call_buffer = []
         self.inner_thoughts_complete = False
         self.put_inner_thoughts_in_kwarg = put_inner_thoughts_in_kwarg
+
+        # Track whether any content was produced (text or tool calls)
+        # Used to detect empty responses from models like Opus 4.6
+        self.has_content = False
 
         # Buffer to handle partial XML tags across chunks
         self.partial_tag_buffer = ""
@@ -298,9 +303,11 @@ class AnthropicStreamingInterface:
 
             if isinstance(content, BetaTextBlock):
                 self.anthropic_mode = EventMode.TEXT
+                self.has_content = True  # Track that we received text content
                 # TODO: Can capture citations, etc.
             elif isinstance(content, BetaToolUseBlock):
                 self.anthropic_mode = EventMode.TOOL_USE
+                self.has_content = True  # Track that we received tool use content
                 self.tool_call_id = content.id
                 self.tool_call_name = content.name
                 self.inner_thoughts_complete = False
@@ -589,8 +596,12 @@ class AnthropicStreamingInterface:
             # message_delta event are *cumulative*." So we assign, not accumulate.
             self.output_tokens = event.usage.output_tokens
         elif isinstance(event, BetaRawMessageStopEvent):
-            # Don't do anything here! We don't want to stop the stream.
-            pass
+            # Check if any content was produced during the stream
+            # Empty responses (no text and no tool calls) should raise an error
+            if not self.has_content:
+                raise LLMEmptyResponseError(
+                    message=f"LLM provider returned empty content in streaming response (model: {self.model}, message_id: {self.message_id})"
+                )
         elif isinstance(event, BetaRawContentBlockStopEvent):
             # If we're exiting a tool use block and there are still buffered messages,
             # we should flush them now.
@@ -837,10 +848,12 @@ class SimpleAnthropicStreamingInterface:
 
             if isinstance(content, BetaTextBlock):
                 self.anthropic_mode = EventMode.TEXT
+                self.has_content = True  # Track that we received text content
                 # TODO: Can capture citations, etc.
 
             elif isinstance(content, BetaToolUseBlock):
                 self.anthropic_mode = EventMode.TOOL_USE
+                self.has_content = True  # Track that we received tool use content
                 self.tool_call_id = content.id
                 self.tool_call_name = content.name
 
@@ -1014,8 +1027,12 @@ class SimpleAnthropicStreamingInterface:
             self.output_tokens = event.usage.output_tokens
 
         elif isinstance(event, BetaRawMessageStopEvent):
-            # Don't do anything here! We don't want to stop the stream.
-            pass
+            # Check if any content was produced during the stream
+            # Empty responses (no text and no tool calls) should raise an error
+            if not self.has_content:
+                raise LLMEmptyResponseError(
+                    message=f"LLM provider returned empty content in streaming response (model: {self.model}, message_id: {self.message_id})"
+                )
 
         elif isinstance(event, BetaRawContentBlockStopEvent):
             self.anthropic_mode = None

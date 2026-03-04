@@ -3,11 +3,11 @@
 File format:
     ---
     description: "Who I am and how I approach work"
-    limit: 20000
     ---
     My name is Memo. I'm a stateful coding assistant...
 
 - Frontmatter fields are only rendered when they differ from defaults.
+- ``limit`` is intentionally excluded from frontmatter (deprecated for git-base memory).
 - Files without frontmatter are treated as value-only (backward compat).
 """
 
@@ -37,12 +37,12 @@ def serialize_block(
     This is used for initial file creation. For updates to existing files,
     prefer `merge_frontmatter_with_body` to preserve user formatting.
     """
-    # description and limit are always included in frontmatter.
+    # description is always included in frontmatter.
     # read_only and metadata are only included when non-default.
+    # limit is intentionally excluded (deprecated for git-base memory).
     front: Dict[str, Any] = {}
 
     front["description"] = description
-    front["limit"] = limit if limit is not None else _get_field_default("limit")
 
     if read_only != _get_field_default("read_only"):
         front["read_only"] = read_only
@@ -111,7 +111,6 @@ def merge_frontmatter_with_body(
 
     # Desired values
     desired_description = description
-    desired_limit = limit if limit is not None else _get_field_default("limit")
     desired_read_only = read_only
     desired_metadata = metadata if metadata is not None else _get_field_default("metadata")
 
@@ -122,8 +121,9 @@ def merge_frontmatter_with_body(
         parsed["description"] = desired_description
         changed = True
 
-    if "limit" not in parsed or parsed.get("limit") != desired_limit:
-        parsed["limit"] = desired_limit
+    # Remove limit from frontmatter if it exists (deprecated for git-base memory)
+    if "limit" in parsed:
+        del parsed["limit"]
         changed = True
 
     if desired_read_only != _get_field_default("read_only"):

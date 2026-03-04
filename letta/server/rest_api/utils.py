@@ -364,6 +364,8 @@ def create_approval_request_message_from_llm_response(
     )
     if pre_computed_assistant_message_id:
         approval_message.id = decrement_message_uuid(pre_computed_assistant_message_id)
+    # Set otid to match streaming interface pattern (index -1 returns id unchanged)
+    approval_message.otid = Message.generate_otid_from_id(approval_message.id, -1)
     messages.append(approval_message)
     return messages
 

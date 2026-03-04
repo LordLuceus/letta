@@ -29,10 +29,22 @@ from starlette.background import BackgroundTask
 
 from letta.log import get_logger
 from letta.server.rest_api.dependencies import HeaderParams, get_headers, get_letta_server
+from letta.services.memory_repo.path_mapping import memory_block_label_from_markdown_path
 
 logger = get_logger(__name__)
 
 _background_tasks: set[asyncio.Task] = set()
+
+
+def _is_syncable_block_markdown_path(path: str) -> bool:
+    """Return whether a markdown path should be mirrored into block cache.
+
+    Special-case skills so only skill definitions are mirrored:
+    - sync `skills/{skill_name}/SKILL.md` as label `skills/{skill_name}`
+    - ignore all other markdown under `skills/`
+    """
+    return memory_block_label_from_markdown_path(path) is not None
+
 
 router = APIRouter(prefix="/git", tags=["git"], include_in_schema=False)
 
@@ -100,7 +112,7 @@ async def _sync_after_push(actor_id: str, agent_id: str) -> None:
     expected_labels = set()
     from letta.services.memory_repo.block_markdown import parse_block_markdown
 
-    md_file_paths = sorted([file_path for file_path in files if file_path.endswith(".md")])
+    md_file_paths = sorted([file_path for file_path in files if _is_syncable_block_markdown_path(file_path)])
     nested_md_file_paths = [file_path for file_path in md_file_paths if "/" in file_path[:-3]]
     logger.info(
         "Post-push sync file scan: agent=%s total_files=%d md_files=%d nested_md_files=%d sample_md_paths=%s",
@@ -113,10 +125,12 @@ async def _sync_after_push(actor_id: str, agent_id: str) -> None:
 
     synced = 0
     for file_path, content in files.items():
-        if not file_path.endswith(".md"):
+        if not _is_syncable_block_markdown_path(file_path):
             continue
 
-        label = file_path[:-3]
+        label = memory_block_label_from_markdown_path(file_path)
+        if label is None:
+            continue
         expected_labels.add(label)
 
         # Parse frontmatter to extract metadata alongside value

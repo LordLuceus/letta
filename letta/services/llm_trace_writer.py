@@ -73,7 +73,6 @@ class LLMTraceWriter:
     def __init__(self):
         self._client = None
         self._shutdown = False
-        self._write_lock = asyncio.Lock()  # Serialize writes - clickhouse_connect isn't thread-safe
 
         # Check if ClickHouse is configured - if not, writing is disabled
         self._enabled = bool(settings.clickhouse_endpoint and settings.clickhouse_password)
@@ -82,11 +81,7 @@ class LLMTraceWriter:
         atexit.register(self._sync_shutdown)
 
     def _get_client(self):
-        """Initialize ClickHouse client on first use (lazy loading).
-
-        Configures async_insert with wait_for_async_insert=1 for reliable
-        server-side batching with acknowledgment.
-        """
+        """Initialize ClickHouse client on first use (lazy loading)."""
         if self._client is not None:
             return self._client
 
@@ -108,8 +103,10 @@ class LLMTraceWriter:
             settings={
                 # Enable server-side batching
                 "async_insert": 1,
-                # Wait for acknowledgment (reliable)
-                "wait_for_async_insert": 1,
+                # Don't wait for server-side flush acknowledgment — fire and forget.
+                # Waiting (value=1) caused each insert to hold an asyncio.Lock for ~1s,
+                # creating unbounded task queues that saturated the event loop under load.
+                "wait_for_async_insert": 0,
                 # Flush after 1 second if batch not full
                 "async_insert_busy_timeout_ms": 1000,
             },
@@ -148,15 +145,15 @@ class LLMTraceWriter:
                 row = trace.to_clickhouse_row()
                 columns = LLMTrace.clickhouse_columns()
 
-                # Serialize writes - clickhouse_connect client isn't thread-safe
-                async with self._write_lock:
-                    # Run synchronous insert in thread pool
-                    await asyncio.to_thread(
-                        client.insert,
-                        "llm_traces",
-                        [row],
-                        column_names=columns,
-                    )
+                # Run synchronous insert in thread pool. clickhouse-connect supports
+                # multithreaded use via a thread-safe connection pool:
+                # https://clickhouse.com/docs/integrations/language-clients/python/advanced-usage#multithreaded-multiprocess-and-asyncevent-driven-use-cases
+                await asyncio.to_thread(
+                    client.insert,
+                    "llm_traces",
+                    [row],
+                    column_names=columns,
+                )
                 return  # Success
 
             except Exception as e:

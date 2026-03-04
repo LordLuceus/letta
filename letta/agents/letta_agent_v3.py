@@ -21,7 +21,7 @@ from letta.agents.helpers import (
 )
 from letta.agents.letta_agent_v2 import LettaAgentV2
 from letta.constants import DEFAULT_MAX_STEPS, NON_USER_MSG_PREFIX, REQUEST_HEARTBEAT_PARAM
-from letta.errors import ContextWindowExceededError, LLMError, SystemPromptTokenExceededError
+from letta.errors import ContextWindowExceededError, LLMEmptyResponseError, LLMError, SystemPromptTokenExceededError
 from letta.helpers import ToolRulesSolver
 from letta.helpers.datetime_helpers import get_utc_time, get_utc_timestamp_ns
 from letta.helpers.tool_execution_helper import enable_strict_mode
@@ -45,6 +45,7 @@ from letta.schemas.letta_response import LettaResponse, TurnTokenData
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.message import Message, MessageCreate, ToolReturn
 from letta.schemas.openai.chat_completion_response import ChoiceLogprobs, ToolCall, ToolCallDenial, UsageStatistics
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.step import StepProgression
 from letta.schemas.step_metrics import StepMetrics
 from letta.schemas.tool_execution_result import ToolExecutionResult
@@ -149,6 +150,7 @@ class LettaAgentV3(LettaAgentV2):
         conversation_id: str | None = None,
         client_tools: list[ClientToolSchema] | None = None,
         include_compaction_messages: bool = False,
+        billing_context: "BillingContext | None" = None,
     ) -> LettaResponse:
         """
         Execute the agent loop in blocking mode, returning all messages at once.
@@ -232,6 +234,7 @@ class LettaAgentV3(LettaAgentV2):
                 run_id=run_id,
                 org_id=self.actor.organization_id,
                 user_id=self.actor.id,
+                billing_context=billing_context,
             )
 
         credit_task = None
@@ -362,6 +365,7 @@ class LettaAgentV3(LettaAgentV2):
         conversation_id: str | None = None,
         client_tools: list[ClientToolSchema] | None = None,
         include_compaction_messages: bool = False,
+        billing_context: BillingContext | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Execute the agent loop in streaming mode, yielding chunks as they become available.
@@ -419,6 +423,7 @@ class LettaAgentV3(LettaAgentV2):
                 run_id=run_id,
                 org_id=self.actor.organization_id,
                 user_id=self.actor.id,
+                billing_context=billing_context,
             )
         elif use_sglang_native:
             # Use SGLang native adapter for multi-turn RL training
@@ -431,6 +436,7 @@ class LettaAgentV3(LettaAgentV2):
                 run_id=run_id,
                 org_id=self.actor.organization_id,
                 user_id=self.actor.id,
+                billing_context=billing_context,
             )
             # Reset turns tracking for this step
             self.turns = []
@@ -444,6 +450,7 @@ class LettaAgentV3(LettaAgentV2):
                 run_id=run_id,
                 org_id=self.actor.organization_id,
                 user_id=self.actor.id,
+                billing_context=billing_context,
             )
 
         try:
@@ -764,7 +771,12 @@ class LettaAgentV3(LettaAgentV2):
             ]
         else:
             # Old behavior: UserMessage with packed JSON
-            return list(Message.to_letta_messages(summary_message))
+            messages = list(Message.to_letta_messages(summary_message))
+            # Set otid on returned messages (summary Message doesn't have otid set at creation)
+            for i, msg in enumerate(messages):
+                if not msg.otid:
+                    msg.otid = Message.generate_otid_from_id(summary_message.id, i)
+            return messages
 
     @trace_method
     async def _step(
@@ -988,6 +1000,9 @@ class LettaAgentV3(LettaAgentV2):
                         # If you've reached this point without an error, break out of retry loop
                         break
                     except ValueError as e:
+                        self.stop_reason = LettaStopReason(stop_reason=StopReasonType.invalid_llm_response.value)
+                        raise e
+                    except LLMEmptyResponseError as e:
                         self.stop_reason = LettaStopReason(stop_reason=StopReasonType.invalid_llm_response.value)
                         raise e
                     except LLMError as e:

@@ -13,6 +13,7 @@ from letta.schemas.letta_message import MessageType
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.message import Message, MessageCreate
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.run import Run
 from letta.schemas.user import User
 from letta.services.agent_manager import AgentManager
@@ -69,6 +70,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
         use_assistant_message: bool = True,
         request_start_timestamp_ns: int | None = None,
         include_return_message_types: list[MessageType] | None = None,
+        billing_context: "BillingContext | None" = None,
     ) -> LettaResponse:
         run_ids = []
 
@@ -100,6 +102,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
             run_id=run_id,
             use_assistant_message=use_assistant_message,
             include_return_message_types=include_return_message_types,
+            billing_context=billing_context,
         )
 
         # Get last response messages

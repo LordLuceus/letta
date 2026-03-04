@@ -96,6 +96,10 @@ async def build_summarizer_llm_config(
         # them just like server.create_agent_async does for agents.
         if summarizer_config.model_settings is not None:
             update_params = summarizer_config.model_settings._to_legacy_config_params()
+            # Don't clobber max_tokens with the Pydantic default when the caller
+            # didn't explicitly provide max_output_tokens.
+            if "max_output_tokens" not in summarizer_config.model_settings.model_fields_set:
+                update_params.pop("max_tokens", None)
             return base.model_copy(update=update_params)
 
         return base

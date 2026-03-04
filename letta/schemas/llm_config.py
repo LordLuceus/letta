@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -139,7 +140,9 @@ class LLMConfig(BaseModel):
 
         # Set max_tokens defaults based on model (only if not explicitly provided)
         if "max_tokens" not in values:
-            if model.startswith("gpt-5"):  # Covers both gpt-5 and gpt-5.1
+            if re.match(r"^gpt-5\.[23]", model) and "-chat" not in model:
+                values["max_tokens"] = 128000
+            elif model.startswith("gpt-5"):
                 values["max_tokens"] = 16384
             elif model == "gpt-4.1":
                 values["max_tokens"] = 8192
@@ -299,7 +302,7 @@ class LLMConfig(BaseModel):
                 context_window=272000,
                 reasoning_effort="none",  # Default to "none" for GPT-5.2
                 verbosity="medium",
-                max_tokens=16384,
+                max_tokens=128000,
             )
         elif model_name == "letta":
             return cls(

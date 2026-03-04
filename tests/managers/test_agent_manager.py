@@ -366,6 +366,8 @@ async def test_compaction_settings_model_uses_separate_llm_config_for_summarizat
 async def test_create_agent_sets_default_compaction_model_anthropic(server: SyncServer, default_user):
     """When no compaction_settings provided for Anthropic agent, default haiku model should be set."""
     from letta.schemas.agent import CreateAgent
+    from letta.schemas.enums import ProviderType
+    from letta.services.summarizer.summarizer_config import get_default_summarizer_model
 
     await server.init_async(init_with_default_org_and_user=True)
 
@@ -384,7 +386,7 @@ async def test_create_agent_sets_default_compaction_model_anthropic(server: Sync
 
     # Should have default haiku model set
     assert agent.compaction_settings is not None
-    assert agent.compaction_settings.model == "anthropic/claude-haiku-4-5-20251001"
+    assert agent.compaction_settings.model == get_default_summarizer_model(ProviderType.anthropic)
 
 
 @pytest.mark.asyncio
@@ -806,6 +808,79 @@ async def test_update_agent_compaction_settings(server: SyncServer, comprehensiv
     assert updated_agent.compaction_settings.sliding_window_percentage == 0.4
     assert updated_agent.compaction_settings.prompt == "Updated summarization prompt"
     assert updated_agent.compaction_settings.prompt_acknowledgement == False
+
+
+@pytest.mark.asyncio
+async def test_update_agent_partial_compaction_settings(server: SyncServer, comprehensive_test_agent_fixture, default_user):
+    """Test that an agent's compaction_settings can be upserted."""
+    from letta.services.summarizer.summarizer_config import get_default_prompt_for_mode
+
+    agent, _ = comprehensive_test_agent_fixture
+
+    # Create new compaction settings
+    original_compaction_settings = agent.compaction_settings.model_copy()
+
+    new_compaction_settings = CompactionSettings(
+        mode="all",
+        prompt_acknowledgement=True,
+        clip_chars=3000,
+    )
+
+    # Update agent with compaction settings
+    update_agent_request = UpdateAgent(
+        compaction_settings=new_compaction_settings,
+    )
+
+    updated_agent = await server.agent_manager.update_agent_async(agent.id, update_agent_request, actor=default_user)
+
+    # Verify compaction settings were updated correctly
+    assert updated_agent.compaction_settings is not None
+    assert updated_agent.compaction_settings.model == original_compaction_settings.model
+    assert updated_agent.compaction_settings.model_settings == original_compaction_settings.model_settings
+    assert updated_agent.compaction_settings.sliding_window_percentage == original_compaction_settings.sliding_window_percentage
+    assert updated_agent.compaction_settings.mode == "all"
+    assert updated_agent.compaction_settings.clip_chars == 3000
+    assert updated_agent.compaction_settings.prompt == get_default_prompt_for_mode("all")
+    assert updated_agent.compaction_settings.prompt_acknowledgement == True
+
+
+@pytest.mark.asyncio
+async def test_update_agent_partial_compaction_settings_same_mode(server: SyncServer, comprehensive_test_agent_fixture, default_user):
+    """Test that if the mode stays the same without a prompt passed in, the prompt is not updated."""
+
+    agent, _ = comprehensive_test_agent_fixture
+
+    update_agent_request = UpdateAgent(
+        compaction_settings=CompactionSettings(mode="sliding_window", prompt="This is a fake prompt."),
+    )
+    updated_agent = await server.agent_manager.update_agent_async(agent.id, update_agent_request, actor=default_user)
+
+    assert updated_agent.compaction_settings is not None
+    assert updated_agent.compaction_settings.prompt == "This is a fake prompt."
+
+    # Create new compaction settings
+    original_compaction_settings = updated_agent.compaction_settings.model_copy()
+
+    new_compaction_settings = CompactionSettings(
+        mode="sliding_window",
+        model="openai/gpt-4o-mini",
+    )
+
+    # Update agent with compaction settings
+    update_agent_request = UpdateAgent(
+        compaction_settings=new_compaction_settings,
+    )
+
+    final_agent = await server.agent_manager.update_agent_async(updated_agent.id, update_agent_request, actor=default_user)
+
+    # Verify compaction settings were updated correctly
+    assert final_agent.compaction_settings is not None
+    assert final_agent.compaction_settings.sliding_window_percentage == original_compaction_settings.sliding_window_percentage
+    assert final_agent.compaction_settings.prompt == original_compaction_settings.prompt
+    assert final_agent.compaction_settings.clip_chars == original_compaction_settings.clip_chars
+    assert final_agent.compaction_settings.prompt_acknowledgement == original_compaction_settings.prompt_acknowledgement
+    assert final_agent.compaction_settings.mode == "sliding_window"
+    assert final_agent.compaction_settings.model == "openai/gpt-4o-mini"
 
 
 @pytest.mark.asyncio

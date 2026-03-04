@@ -24,8 +24,7 @@ from letta.constants import (
     INCLUDE_MODEL_KEYWORDS_BASE_TOOL_RULES,
     RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE,
 )
-
-from letta.errors import LettaAgentNotFoundError, LettaError, LettaInvalidArgumentError
+from letta.errors import LettaError
 from letta.helpers import ToolRulesSolver
 from letta.helpers.datetime_helpers import get_utc_time
 from letta.log import get_logger
@@ -788,6 +787,25 @@ class AgentManager:
                     agent_update.reasoning,
                     agent.agent_type,
                 )
+
+            # Upsert compaction_settings: merge incoming partial update with existing settings
+            if agent_update.compaction_settings is not None:
+                # If mode changed, update the prompt to the default for the new mode
+                changed_fields = agent_update.compaction_settings.model_fields_set
+                if (
+                    agent.compaction_settings is not None
+                    and "mode" in changed_fields
+                    and agent_update.compaction_settings.mode != agent.compaction_settings.mode
+                ):
+                    from letta.services.summarizer.summarizer_config import get_default_prompt_for_mode
+
+                    agent_update.compaction_settings.prompt = get_default_prompt_for_mode(agent_update.compaction_settings.mode)
+
+                # Fill in unchanged fields from existing settings
+                if agent.compaction_settings is not None:
+                    for field in agent.compaction_settings.model_fields:
+                        if field not in changed_fields:
+                            setattr(agent_update.compaction_settings, field, getattr(agent.compaction_settings, field))
 
             scalar_updates = {
                 "name": agent_update.name,

@@ -3,7 +3,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from sqlalchemy import NullPool, text
+from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -88,10 +88,6 @@ class DatabaseRegistry:
             try:
                 async with async_session_factory() as session:
                     try:
-                        result = await session.execute(text("SELECT pg_backend_pid(), current_setting('statement_timeout')"))
-                        pid, timeout = result.one()
-                        logger.warning(f"[stmt_timeout_debug] pid={pid} statement_timeout={timeout}")
-                        await session.rollback()
                         yield session
                         await session.commit()
                     except asyncio.CancelledError:

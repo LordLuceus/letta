@@ -49,6 +49,7 @@ from letta.schemas.memory import (
 )
 from letta.schemas.message import Message, MessageCreate, MessageCreateType, MessageSearchRequest, MessageSearchResult
 from letta.schemas.passage import Passage
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.run import Run as PydanticRun, RunUpdate
 from letta.schemas.source import Source
 from letta.schemas.tool import Tool
@@ -156,7 +157,7 @@ async def list_agents(
     order: Literal["asc", "desc"] = Query(
         "desc", description="Sort order for agents by creation time. 'asc' for oldest first, 'desc' for newest first"
     ),
-    order_by: Literal["created_at", "last_run_completion"] = Query("created_at", description="Field to sort by"),
+    order_by: Literal["created_at", "updated_at", "last_run_completion"] = Query("created_at", description="Field to sort by"),
     ascending: bool = Query(
         False,
         description="Whether to sort agents oldest to newest (True) or newest to oldest (False, default)",
@@ -1697,6 +1698,7 @@ async def send_message(
             actor=actor,
             request=request,
             run_type="send_message",
+            billing_context=headers.billing_context,
         )
         return result
 
@@ -1767,6 +1769,7 @@ async def send_message(
             include_return_message_types=request.include_return_message_types,
             client_tools=request.client_tools,
             include_compaction_messages=request.include_compaction_messages,
+            billing_context=headers.billing_context,
         )
         run_status = result.stop_reason.stop_reason.run_status
         return result
@@ -1845,6 +1848,7 @@ async def send_message_streaming(
         actor=actor,
         request=request,
         run_type="send_message_streaming",
+        billing_context=headers.billing_context,
     )
 
     return result
@@ -1868,6 +1872,13 @@ async def cancel_message(
     """
     # TODO: WHY DOES THIS CANCEL A LIST OF RUNS?
     actor = await server.user_manager.get_actor_or_default_async(actor_id=headers.actor_id)
+    logger.info(
+        "[Interrupt] Cancel request received for agent=%s by actor=%s (org=%s), explicit_run_ids=%s",
+        agent_id,
+        actor.id,
+        actor.organization_id,
+        request.run_ids if request else None,
+    )
     if not settings.track_agent_run:
         raise HTTPException(status_code=400, detail="Agent run tracking is disabled")
     run_ids = request.run_ids if request else None
@@ -2036,6 +2047,7 @@ async def _process_message_background(
     include_return_message_types: list[MessageType] | None = None,
     override_model: str | None = None,
     include_compaction_messages: bool = False,
+    billing_context: "BillingContext | None" = None,
 ) -> None:
     """Background task to process the message and update run status."""
     request_start_timestamp_ns = get_utc_timestamp_ns()
@@ -2067,6 +2079,7 @@ async def _process_message_background(
             request_start_timestamp_ns=request_start_timestamp_ns,
             include_return_message_types=include_return_message_types,
             include_compaction_messages=include_compaction_messages,
+            billing_context=billing_context,
         )
         runs_manager = RunManager()
         from letta.schemas.enums import RunStatus
@@ -2235,6 +2248,7 @@ async def send_message_async(
             include_return_message_types=request.include_return_message_types,
             override_model=request.override_model,
             include_compaction_messages=request.include_compaction_messages,
+            billing_context=headers.billing_context,
         ),
         label=f"process_message_background_{run.id}",
     )
@@ -2419,7 +2433,11 @@ async def summarize_messages(
 
         # If mode changed from agent's original settings and prompt not explicitly set in request, then use the default prompt for the new mode
         # Ex: previously was sliding_window, now is all, so we need to use the default prompt for all mode
-        if "mode" in changed_fields and agent.compaction_settings.mode != request.compaction_settings.mode:
+        if (
+            "mode" in changed_fields
+            and "prompt" not in changed_fields
+            and agent.compaction_settings.mode != request.compaction_settings.mode
+        ):
             from letta.services.summarizer.summarizer_config import get_default_prompt_for_mode
 
             compaction_settings.prompt = get_default_prompt_for_mode(compaction_settings.mode)
@@ -2439,7 +2457,7 @@ async def summarize_messages(
         logger.warning(f"Summarization failed to reduce the number of messages. {num_messages_before} messages -> {num_messages_after}.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Summarization failed to reduce the number of messages. You may need to use a different CompactionSettings (e.g. using `all` mode).",
+            detail="Summarization failed to reduce the number of messages. You may not have enough messages to compact or need to use a different CompactionSettings (e.g. using `all` mode).",
         )
     await agent_loop._checkpoint_messages(run_id=None, step_id=None, new_messages=[summary_message], in_context_messages=messages)
     return CompactionResponse(

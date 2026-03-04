@@ -355,8 +355,9 @@ async def test_add_messages_to_conversation(
         actor=default_user,
     )
 
-    assert len(message_ids) == 1
-    assert message_ids[0] == hello_world_message_fixture.id
+    # create_conversation auto-creates a system message at position 0
+    assert len(message_ids) == 2
+    assert hello_world_message_fixture.id in message_ids
 
 
 @pytest.mark.asyncio
@@ -385,8 +386,9 @@ async def test_get_messages_for_conversation(
         actor=default_user,
     )
 
-    assert len(messages) == 1
-    assert messages[0].id == hello_world_message_fixture.id
+    # create_conversation auto-creates a system message at position 0
+    assert len(messages) == 2
+    assert any(m.id == hello_world_message_fixture.id for m in messages)
 
 
 @pytest.mark.asyncio
@@ -430,7 +432,10 @@ async def test_message_ordering_in_conversation(conversation_manager, server: Sy
         actor=default_user,
     )
 
-    assert retrieved_ids == [m.id for m in messages]
+    # create_conversation auto-creates a system message at position 0,
+    # so the user messages start at index 1
+    assert len(retrieved_ids) == len(messages) + 1
+    assert retrieved_ids[1:] == [m.id for m in messages]
 
 
 @pytest.mark.asyncio
@@ -489,7 +494,7 @@ async def test_update_in_context_messages(conversation_manager, server: SyncServ
 
 @pytest.mark.asyncio
 async def test_empty_conversation_message_ids(conversation_manager, server: SyncServer, sarah_agent, default_user):
-    """Test getting message IDs from an empty conversation."""
+    """Test getting message IDs from a newly created conversation (has auto-created system message)."""
     # Create a conversation
     conversation = await conversation_manager.create_conversation(
         agent_id=sarah_agent.id,
@@ -497,13 +502,14 @@ async def test_empty_conversation_message_ids(conversation_manager, server: Sync
         actor=default_user,
     )
 
-    # Get message IDs (should be empty)
+    # create_conversation auto-creates a system message at position 0,
+    # so a newly created conversation has exactly one message
     message_ids = await conversation_manager.get_message_ids_for_conversation(
         conversation_id=conversation.id,
         actor=default_user,
     )
 
-    assert message_ids == []
+    assert len(message_ids) == 1
 
 
 @pytest.mark.asyncio
@@ -551,9 +557,11 @@ async def test_list_conversation_messages(conversation_manager, server: SyncServ
         actor=default_user,
     )
 
-    assert len(letta_messages) == 2
+    # create_conversation auto-creates a system message, so we get 3 total
+    assert len(letta_messages) == 3
     # Check message types
     message_types = [m.message_type for m in letta_messages]
+    assert "system_message" in message_types
     assert "user_message" in message_types
     assert "assistant_message" in message_types
 
@@ -902,9 +910,12 @@ async def test_list_conversation_messages_ascending_order(conversation_manager, 
         reverse=False,
     )
 
-    # First message should be "Message 0" (oldest)
-    assert len(letta_messages) == 3
-    assert "Message 0" in letta_messages[0].content
+    # create_conversation auto-creates a system message at position 0,
+    # so we get 4 messages total (system + 3 user messages)
+    assert len(letta_messages) == 4
+    # First message is the auto-created system message; "Message 0" is second
+    assert letta_messages[0].message_type == "system_message"
+    assert "Message 0" in letta_messages[1].content
 
 
 @pytest.mark.asyncio
@@ -949,8 +960,9 @@ async def test_list_conversation_messages_descending_order(conversation_manager,
         reverse=True,
     )
 
-    # First message should be "Message 2" (newest)
-    assert len(letta_messages) == 3
+    # create_conversation auto-creates a system message, so 4 total
+    # First message should be "Message 2" (newest) in descending order
+    assert len(letta_messages) == 4
     assert "Message 2" in letta_messages[0].content
 
 
@@ -1081,7 +1093,8 @@ async def test_list_conversation_messages_no_group_id_returns_all(conversation_m
         actor=default_user,
     )
 
-    assert len(all_messages) == 3
+    # create_conversation auto-creates a system message, so 4 total
+    assert len(all_messages) == 4
 
 
 @pytest.mark.asyncio
@@ -1137,8 +1150,8 @@ async def test_list_conversation_messages_order_with_pagination(conversation_man
 
     # The first messages should be different
     assert page_asc[0].content != page_desc[0].content
-    # In ascending, first should be "Message 0"
-    assert "Message 0" in page_asc[0].content
+    # In ascending, first is the auto-created system message, second is "Message 0"
+    assert page_asc[0].message_type == "system_message"
     # In descending, first should be "Message 4"
     assert "Message 4" in page_desc[0].content
 

@@ -24,6 +24,9 @@ def test_get_headers_user_id_allows_none():
         letta_v1_agent=None,
         letta_v1_agent_message_async=None,
         modal_sandbox=None,
+        billing_plan_type=None,
+        billing_cost_source=None,
+        billing_customer_id=None,
     )
     assert isinstance(headers, HeaderParams)
 
@@ -40,6 +43,9 @@ def test_get_headers_user_id_rejects_invalid_format():
             letta_v1_agent=None,
             letta_v1_agent_message_async=None,
             modal_sandbox=None,
+            billing_plan_type=None,
+            billing_cost_source=None,
+            billing_customer_id=None,
         )
 
 
@@ -54,6 +60,9 @@ def test_get_headers_user_id_accepts_valid_format():
         letta_v1_agent=None,
         letta_v1_agent_message_async=None,
         modal_sandbox=None,
+        billing_plan_type=None,
+        billing_cost_source=None,
+        billing_customer_id=None,
     )
     assert headers.actor_id == "user-123e4567-e89b-42d3-8456-426614174000"
 

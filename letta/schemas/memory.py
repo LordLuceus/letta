@@ -226,8 +226,6 @@ class Memory(BaseModel, validate_assignment=True):
             front_lines = []
             if block.description:
                 front_lines.append(f"description: {block.description}")
-            if block.limit is not None:
-                front_lines.append(f"limit: {block.limit}")
             if getattr(block, "read_only", False):
                 front_lines.append("read_only: true")
 
@@ -291,7 +289,40 @@ class Memory(BaseModel, validate_assignment=True):
 
         s.write("\n\n<memory_filesystem>\n")
 
-        def _render_tree(node: dict, prefix: str = ""):
+        def _render_tree(node: dict, prefix: str = "", in_system: bool = False, path_parts: tuple[str, ...] = ()):
+            # Render skills/ as concise top-level entries only, using both
+            # current (`skills/<name>`) and legacy (`skills/<name>/SKILL`) labels.
+            if path_parts == ("skills",):
+                skill_entries: list[tuple[str, str]] = []
+                for name, val in node.items():
+                    if name == LEAF_KEY:
+                        continue
+
+                    block = None
+                    if isinstance(val, dict):
+                        legacy_skill_block = val.get("SKILL")
+                        if legacy_skill_block is not None and not isinstance(legacy_skill_block, dict):
+                            block = legacy_skill_block
+                        elif LEAF_KEY in val and not isinstance(val[LEAF_KEY], dict):
+                            block = val[LEAF_KEY]
+                    else:
+                        block = val
+
+                    if block is None:
+                        continue
+
+                    desc = getattr(block, "description", None)
+                    desc_line = (desc or "").strip().split("\n")[0].strip()
+                    skill_entries.append((name, desc_line))
+
+                skill_entries.sort(key=lambda e: e[0])
+                for i, (name, desc_line) in enumerate(skill_entries):
+                    is_last = i == len(skill_entries) - 1
+                    connector = "└── " if is_last else "├── "
+                    desc_suffix = f" ({desc_line})" if desc_line else ""
+                    s.write(f"{prefix}{connector}{name}{desc_suffix}\n")
+                return
+
             # Sort: directories first, then files. If a node is both a directory and a
             # leaf (LEAF_KEY present), show both <name>/ and <name>.md.
             dirs = []
@@ -316,9 +347,24 @@ class Memory(BaseModel, validate_assignment=True):
                 if is_dir:
                     s.write(f"{prefix}{connector}{name}/\n")
                     extension = "    " if is_last else "│   "
-                    _render_tree(node[name], prefix + extension)
+                    _render_tree(
+                        node[name],
+                        prefix + extension,
+                        in_system=in_system or name == "system",
+                        path_parts=(*path_parts, name),
+                    )
                 else:
-                    s.write(f"{prefix}{connector}{name}.md\n")
+                    # For files outside system/, append the block description
+                    desc_suffix = ""
+                    if not in_system:
+                        val = node[name]
+                        block = val[LEAF_KEY] if isinstance(val, dict) else val
+                        desc = getattr(block, "description", None)
+                        if desc:
+                            desc_line = desc.strip().split("\n")[0].strip()
+                            if desc_line:
+                                desc_suffix = f" ({desc_line})"
+                    s.write(f"{prefix}{connector}{name}.md{desc_suffix}\n")
 
         _render_tree(tree)
         s.write("</memory_filesystem>")

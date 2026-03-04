@@ -52,8 +52,17 @@ class TestLogContextMiddleware:
             async def get_files(self, agent_id, org_id, ref):
                 assert ref == "HEAD"
                 return {
-                    "system/human.md": "---\ndescription: human\nlimit: 20000\n---\nname: sarah",
-                    "system/persona.md": "---\ndescription: persona\nlimit: 20000\n---\nbe helpful",
+                    "system/human.md": "---\ndescription: human\n---\nname: sarah",
+                    "system/persona.md": "---\ndescription: persona\n---\nbe helpful",
+                    "skills/research-helper/SKILL.md": (
+                        "---\n"
+                        "name: research-helper\n"
+                        "description: Search the web and summarize findings.\n"
+                        "---\n"
+                        "# Research Helper\n\n"
+                        "Use this skill to do deep web research and summarize results.\n"
+                    ),
+                    "skills/research-helper/references/details.md": "---\ndescription: nested\n---\nShould not be synced",
                 }
 
         class DummyMemoryRepoManager:
@@ -95,6 +104,12 @@ class TestLogContextMiddleware:
         labels = {call["label"] for call in synced_calls}
         assert "system/human" in labels
         assert "system/persona" in labels
+        assert "skills/research-helper" in labels
+        assert "skills/research-helper/references/details" not in labels
+
+        by_label = {call["label"]: call for call in synced_calls}
+        assert by_label["skills/research-helper"]["description"] == "Search the web and summarize findings."
+        assert by_label["skills/research-helper"]["value"].startswith("# Research Helper")
 
     def test_extracts_actor_id_from_headers(self, client):
         response = client.get("/v1/agents/agent-123e4567-e89b-42d3-8456-426614174000", headers={"user_id": "user-abc123"})

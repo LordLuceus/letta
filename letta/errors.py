@@ -283,6 +283,15 @@ class LLMServerError(LLMError):
     while processing the request."""
 
 
+class LLMEmptyResponseError(LLMServerError):
+    """Error when LLM returns an empty response (no content and no tool calls).
+
+    This is a subclass of LLMServerError to maintain retry behavior, but allows
+    specific handling for empty response cases which may benefit from request
+    modification before retry.
+    """
+
+
 class LLMTimeoutError(LLMError):
     """Error when LLM request times out"""
 

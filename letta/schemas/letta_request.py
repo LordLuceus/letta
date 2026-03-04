@@ -88,8 +88,7 @@ class LettaRequest(BaseModel):
     )
     top_logprobs: Optional[int] = Field(
         default=None,
-        description="Number of most likely tokens to return at each position (0-20). "
-        "Requires return_logprobs=True.",
+        description="Number of most likely tokens to return at each position (0-20). Requires return_logprobs=True.",
     )
     return_token_ids: bool = Field(
         default=False,
@@ -155,6 +154,10 @@ class LettaStreamingRequest(LettaRequest):
 class ConversationMessageRequest(LettaRequest):
     """Request for sending messages to a conversation. Streams by default."""
 
+    agent_id: Optional[str] = Field(
+        default=None,
+        description="Agent ID for agent-direct mode with 'default' conversation. Use with conversation_id='default' in the URL path.",
+    )
     streaming: bool = Field(
         default=True,
         description="If True (default), returns a streaming response (Server-Sent Events). If False, returns a complete JSON response.",
@@ -194,6 +197,10 @@ class CreateBatch(BaseModel):
 
 
 class RetrieveStreamRequest(BaseModel):
+    agent_id: Optional[str] = Field(
+        default=None,
+        description="Agent ID for agent-direct mode with 'default' conversation. Use with conversation_id='default' in the URL path.",
+    )
     starting_after: int = Field(
         0, description="Sequence id to use as a cursor for pagination. Response will start streaming after this chunk sequence id"
     )

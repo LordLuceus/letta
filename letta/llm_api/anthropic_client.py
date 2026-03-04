@@ -19,6 +19,8 @@ from letta.errors import (
     LLMAuthenticationError,
     LLMBadRequestError,
     LLMConnectionError,
+    LLMEmptyResponseError,
+    LLMError,
     LLMInsufficientCreditsError,
     LLMNotFoundError,
     LLMPermissionDeniedError,
@@ -957,6 +959,11 @@ class AnthropicClient(LLMClientBase):
 
     @trace_method
     def handle_llm_error(self, e: Exception, llm_config: Optional[LLMConfig] = None) -> Exception:
+        # Pass through errors that are already LLMError instances unchanged
+        # This preserves specific error types like LLMEmptyResponseError
+        if isinstance(e, LLMError):
+            return e
+
         is_byok = (llm_config.provider_category == ProviderCategory.byok) if llm_config else None
 
         # make sure to check for overflow errors, regardless of error type
@@ -1278,7 +1285,7 @@ class AnthropicClient(LLMClientBase):
                 response.stop_reason,
                 json.dumps(response_data),
             )
-            raise LLMServerError(
+            raise LLMEmptyResponseError(
                 message=f"LLM provider returned empty content in response (ID: {response.id}, model: {response.model}, stop_reason: {response.stop_reason})",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
                 details={

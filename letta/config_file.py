@@ -134,7 +134,7 @@ def _flatten_model_settings(d: dict, env_vars: dict[str, str]) -> None:
             api_base: yyy    -> OPENAI_API_BASE
         anthropic:
             api_key: zzz     -> ANTHROPIC_API_KEY
-        global_max_context_window_limit: 32000  -> GLOBAL_MAX_CONTEXT_WINDOW_LIMIT
+        global_max_context_window_limit: 128000  -> GLOBAL_MAX_CONTEXT_WINDOW_LIMIT
     """
     for key, value in d.items():
         if isinstance(value, dict):

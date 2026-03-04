@@ -15,6 +15,7 @@ from letta.errors import (
     LettaInvalidArgumentError,
     LettaServiceUnavailableError,
     LLMAuthenticationError,
+    LLMEmptyResponseError,
     LLMError,
     LLMRateLimitError,
     LLMTimeoutError,
@@ -33,6 +34,7 @@ from letta.schemas.letta_request import ClientToolSchema, LettaStreamingRequest
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.message import MessageCreate
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.run import Run as PydanticRun, RunUpdate
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
@@ -76,6 +78,8 @@ class StreamingService:
         request: LettaStreamingRequest,
         run_type: str = "streaming",
         conversation_id: Optional[str] = None,
+        should_lock: bool = False,
+        billing_context: "BillingContext | None" = None,
     ) -> tuple[Optional[PydanticRun], Union[StreamingResponse, LettaResponse]]:
         """
         Create a streaming response for an agent.
@@ -86,6 +90,7 @@ class StreamingService:
             request: The LettaStreamingRequest containing all request parameters
             run_type: Type of run for tracking
             conversation_id: Optional conversation ID for conversation-scoped messaging
+            should_lock: If True and conversation_id is None, use agent_id as lock key
 
         Returns:
             Tuple of (run object or None, streaming response)
@@ -116,6 +121,10 @@ class StreamingService:
                 )
                 if conversation.model_settings is not None:
                     update_params = conversation.model_settings._to_legacy_config_params()
+                    # Don't clobber max_tokens with the Pydantic default when the caller
+                    # didn't explicitly provide max_output_tokens.
+                    if "max_output_tokens" not in conversation.model_settings.model_fields_set:
+                        update_params.pop("max_tokens", None)
                     conversation_llm_config = conversation_llm_config.model_copy(update=update_params)
                 agent = agent.model_copy(update={"llm_config": conversation_llm_config})
 
@@ -130,12 +139,15 @@ class StreamingService:
 
         model_compatible_token_streaming = self._is_token_streaming_compatible(agent)
 
-        # Attempt to acquire conversation lock if conversation_id is provided
-        # This prevents concurrent message processing for the same conversation
+        # Determine lock key: use conversation_id if provided, else agent_id if should_lock
+        lock_key = conversation_id if conversation_id else (agent_id if should_lock else None)
+
+        # Attempt to acquire lock if lock_key is set
+        # This prevents concurrent message processing for the same conversation/agent
         # Skip locking if Redis is not available (graceful degradation)
-        if conversation_id and not isinstance(redis_client, NoopAsyncRedisClient):
+        if lock_key and not isinstance(redis_client, NoopAsyncRedisClient):
             await redis_client.acquire_conversation_lock(
-                conversation_id=conversation_id,
+                conversation_id=lock_key,
                 token=str(uuid4()),
             )
 
@@ -163,8 +175,10 @@ class StreamingService:
                 include_return_message_types=request.include_return_message_types,
                 actor=actor,
                 conversation_id=conversation_id,
+                lock_key=lock_key,  # For lock release (may differ from conversation_id)
                 client_tools=request.client_tools,
                 include_compaction_messages=request.include_compaction_messages,
+                billing_context=billing_context,
             )
 
             # handle background streaming if requested
@@ -195,7 +209,7 @@ class StreamingService:
                         run_id=run.id,
                         run_manager=self.server.run_manager,
                         actor=actor,
-                        conversation_id=conversation_id,
+                        conversation_id=lock_key,  # Use lock_key for lock release
                     ),
                     label=f"background_stream_processor_{run.id}",
                 )
@@ -251,7 +265,7 @@ class StreamingService:
             if settings.track_agent_run and run and run_status:
                 await self.server.run_manager.update_run_by_id_async(
                     run_id=run.id,
-                    conversation_id=conversation_id,
+                    conversation_id=lock_key,  # Use lock_key for lock release
                     update=RunUpdate(status=run_status, metadata=run_update_metadata),
                     actor=actor,
                 )
@@ -326,8 +340,10 @@ class StreamingService:
         include_return_message_types: Optional[list[MessageType]],
         actor: User,
         conversation_id: Optional[str] = None,
+        lock_key: Optional[str] = None,
         client_tools: Optional[list[ClientToolSchema]] = None,
         include_compaction_messages: bool = False,
+        billing_context: BillingContext | None = None,
     ) -> AsyncIterator:
         """
         Create a stream with unified error handling.
@@ -356,6 +372,7 @@ class StreamingService:
                     conversation_id=conversation_id,
                     client_tools=client_tools,
                     include_compaction_messages=include_compaction_messages,
+                    billing_context=billing_context,
                 )
 
                 async for chunk in stream:
@@ -442,6 +459,21 @@ class StreamingService:
                 yield f"event: error\ndata: {error_message.model_dump_json()}\n\n"
                 # Send [DONE] marker to properly close the stream
                 yield "data: [DONE]\n\n"
+            except LLMEmptyResponseError as e:
+                run_status = RunStatus.failed
+                stop_reason = LettaStopReason(stop_reason=StopReasonType.invalid_llm_response)
+                error_message = LettaErrorMessage(
+                    run_id=run_id,
+                    error_type="llm_empty_response",
+                    message="LLM returned an empty response.",
+                    detail=str(e),
+                )
+                error_data = {"error": error_message.model_dump()}
+                logger.warning(f"Run {run_id} stopped with LLM empty response: {e}, error_data: {error_message.model_dump()}")
+                yield f"data: {stop_reason.model_dump_json()}\n\n"
+                yield f"event: error\ndata: {error_message.model_dump_json()}\n\n"
+                # Send [DONE] marker to properly close the stream
+                yield "data: [DONE]\n\n"
             except LLMError as e:
                 run_status = RunStatus.failed
                 stop_reason = LettaStopReason(stop_reason=StopReasonType.llm_api_error)
@@ -491,7 +523,7 @@ class StreamingService:
                     stop_reason_value = stop_reason.stop_reason if stop_reason else StopReasonType.error.value
                     await self.runs_manager.update_run_by_id_async(
                         run_id=run_id,
-                        conversation_id=conversation_id,
+                        conversation_id=lock_key,  # Use lock_key for lock release
                         update=RunUpdate(status=run_status, stop_reason=stop_reason_value, metadata=error_data),
                         actor=actor,
                     )

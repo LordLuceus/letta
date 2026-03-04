@@ -15,6 +15,7 @@ from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.message import Message, MessageCreate, MessageUpdate
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
 from letta.services.agent_manager import AgentManager
@@ -51,7 +52,11 @@ class BaseAgent(ABC):
 
     @abstractmethod
     async def step(
-        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS, run_id: Optional[str] = None
+        self,
+        input_messages: List[MessageCreate],
+        max_steps: int = DEFAULT_MAX_STEPS,
+        run_id: Optional[str] = None,
+        billing_context: "BillingContext | None" = None,
     ) -> LettaResponse:
         """
         Main execution loop for the agent.

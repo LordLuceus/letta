@@ -141,6 +141,9 @@ class ClickhouseProviderTraceBackend(ProviderTraceBackendClient):
             request_json=request_json_str,
             response_json=response_json_str,
             llm_config_json=llm_config_json_str,
+            billing_plan_type=provider_trace.billing_context.plan_type if provider_trace.billing_context else None,
+            billing_cost_source=provider_trace.billing_context.cost_source if provider_trace.billing_context else None,
+            billing_customer_id=provider_trace.billing_context.customer_id if provider_trace.billing_context else None,
         )
 
     def _extract_usage(self, response_json: dict, provider: str) -> dict:

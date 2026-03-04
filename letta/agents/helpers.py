@@ -192,44 +192,15 @@ async def _prepare_in_context_messages_no_persist_async(
             # Otherwise, include the full list of messages from the conversation
             current_in_context_messages = await message_manager.get_messages_by_ids_async(message_ids=message_ids, actor=actor)
         else:
-            # No messages in conversation yet - compile a new system message for this conversation
-            # Each conversation gets its own system message (captures memory state at conversation start)
-            from letta.prompts.prompt_generator import PromptGenerator
-            from letta.services.passage_manager import PassageManager
-
-            num_messages = await message_manager.size_async(actor=actor, agent_id=agent_state.id)
-            passage_manager = PassageManager()
-            num_archival_memories = await passage_manager.agent_passage_size_async(actor=actor, agent_id=agent_state.id)
-
-            system_message_str = await PromptGenerator.compile_system_message_async(
-                system_prompt=agent_state.system,
-                in_context_memory=agent_state.memory,
-                in_context_memory_last_edit=get_utc_time(),
-                timezone=agent_state.timezone,
-                user_defined_variables=None,
-                append_icm_if_missing=True,
-                previous_message_count=num_messages,
-                archival_memory_size=num_archival_memories,
-                sources=agent_state.sources,
-                max_files_open=agent_state.max_files_open,
-            )
-            system_message = Message.dict_to_message(
-                agent_id=agent_state.id,
-                model=agent_state.llm_config.model,
-                openai_message_dict={"role": "system", "content": system_message_str},
-            )
-
-            # Persist the new system message
-            persisted_messages = await message_manager.create_many_messages_async([system_message], actor=actor)
-            system_message = persisted_messages[0]
-
-            # Add it to the conversation tracking
-            await conversation_manager.add_messages_to_conversation(
+            # No messages in conversation yet (fallback) - compile a new system message
+            # Normally this is handled at conversation creation time, but this covers
+            # edge cases where a conversation exists without a system message.
+            system_message = await conversation_manager.compile_and_save_system_message_for_conversation(
                 conversation_id=conversation_id,
                 agent_id=agent_state.id,
-                message_ids=[system_message.id],
                 actor=actor,
-                starting_position=0,
+                agent_state=agent_state,
+                message_manager=message_manager,
             )
 
             current_in_context_messages = [system_message]

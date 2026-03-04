@@ -88,7 +88,7 @@ def supports_none_reasoning_effort(model: str) -> bool:
 
     Currently, GPT-5.1 and GPT-5.2 models support the 'none' reasoning effort level.
     """
-    return model.startswith("gpt-5.1") or model.startswith("gpt-5.2")
+    return model.startswith("gpt-5.1") or model.startswith("gpt-5.2") or model.startswith("gpt-5.3")
 
 
 def is_openai_5_model(model: str) -> bool:
@@ -389,13 +389,16 @@ class OpenAIClient(LLMClientBase):
             input=openai_messages_list,
             tools=responses_tools,
             tool_choice=tool_choice,
-            max_output_tokens=llm_config.max_tokens,
             temperature=llm_config.temperature if supports_temperature_param(model) else None,
             parallel_tool_calls=llm_config.parallel_tool_calls if tools and supports_parallel_tool_calling(model) else False,
         )
 
         # Handle text configuration (verbosity and response format)
         text_config_kwargs = {}
+
+        # Only set max_output_tokens if explicitly configured
+        if llm_config.max_tokens is not None:
+            data.max_output_tokens = llm_config.max_tokens
 
         # Add verbosity control for GPT-5 models
         if supports_verbosity_control(model) and llm_config.verbosity:
@@ -451,7 +454,6 @@ class OpenAIClient(LLMClientBase):
         )
 
         request_data = data.model_dump(exclude_unset=True)
-        # print("responses request data", request_data)
         return request_data
 
     @trace_method
@@ -638,6 +640,14 @@ class OpenAIClient(LLMClientBase):
                     # Provider doesn't support structured output - ensure strict is False
                     tool.function.strict = False
         request_data = data.model_dump(exclude_unset=True)
+
+        # Fireworks uses strict validation (additionalProperties: false) and rejects
+        # reasoning fields that are not in their schema.
+        is_fireworks = llm_config.model_endpoint and "fireworks.ai" in llm_config.model_endpoint
+        if is_fireworks and "messages" in request_data:
+            for message in request_data["messages"]:
+                for field in ("reasoning_content_signature", "redacted_reasoning_content", "omitted_reasoning_content"):
+                    message.pop(field, None)
 
         # If Ollama
         # if llm_config.handle.startswith("ollama/") and llm_config.enable_reasoner:

@@ -9,7 +9,7 @@ from letta.llm_api.google_constants import GOOGLE_MODEL_FOR_API_KEY_CHECK
 from letta.llm_api.google_vertex_client import GoogleVertexClient
 from letta.log import get_logger
 from letta.schemas.llm_config import LLMConfig
-from letta.settings import model_settings, settings
+from letta.settings import model_settings
 
 logger = get_logger(__name__)
 
@@ -18,7 +18,7 @@ class GoogleAIClient(GoogleVertexClient):
     provider_label = "Google AI"
 
     def _get_client(self, llm_config: Optional[LLMConfig] = None):
-        timeout_ms = int(settings.llm_request_timeout_seconds * 1000)
+        timeout_ms = int(model_settings.gemini_timeout_seconds * 1000)
         api_key = None
         if llm_config:
             api_key, _, _ = self.get_byok_overrides(llm_config)
@@ -30,7 +30,7 @@ class GoogleAIClient(GoogleVertexClient):
         )
 
     async def _get_client_async(self, llm_config: Optional[LLMConfig] = None):
-        timeout_ms = int(settings.llm_request_timeout_seconds * 1000)
+        timeout_ms = int(model_settings.gemini_timeout_seconds * 1000)
         api_key = None
         if llm_config:
             api_key, _, _ = await self.get_byok_overrides_async(llm_config)

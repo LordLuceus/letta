@@ -12,6 +12,7 @@ from letta.schemas.user import User
 
 if TYPE_CHECKING:
     from letta.schemas.letta_request import ClientToolSchema
+    from letta.schemas.provider_trace import BillingContext
 
 
 class BaseAgentV2(ABC):
@@ -52,6 +53,7 @@ class BaseAgentV2(ABC):
         request_start_timestamp_ns: int | None = None,
         client_tools: list["ClientToolSchema"] | None = None,
         include_compaction_messages: bool = False,  # Not used in V2, but accepted for API compatibility
+        billing_context: "BillingContext | None" = None,
     ) -> LettaResponse:
         """
         Execute the agent loop in blocking mode, returning all messages at once.
@@ -76,6 +78,7 @@ class BaseAgentV2(ABC):
         conversation_id: str | None = None,
         client_tools: list["ClientToolSchema"] | None = None,
         include_compaction_messages: bool = False,  # Not used in V2, but accepted for API compatibility
+        billing_context: "BillingContext | None" = None,
     ) -> AsyncGenerator[LettaMessage | LegacyLettaMessage | MessageStreamStatus, None]:
         """
         Execute the agent loop in streaming mode, yielding chunks as they become available.

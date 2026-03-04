@@ -282,10 +282,10 @@ class AnthropicModelSettings(ModelSettings):
         description="Soft control for how verbose model output should be, used for GPT-5 models.",
     )
 
-    # Opus 4.5 effort parameter
-    effort: Optional[Literal["low", "medium", "high"]] = Field(
+    # Effort parameter for Opus 4.5, Opus 4.6, and Sonnet 4.6
+    effort: Optional[Literal["low", "medium", "high", "max"]] = Field(
         None,
-        description="Effort level for Opus 4.5 model (controls token conservation). Not setting this gives similar performance to 'high'.",
+        description="Effort level for supported Anthropic models (controls token spending). 'max' is only available on Opus 4.6. Not setting this gives similar performance to 'high'.",
     )
 
     # Anthropic supports strict mode for tool calling - defaults to False

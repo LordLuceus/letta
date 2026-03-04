@@ -604,6 +604,9 @@ def _apply_pagination(
     if sort_by == "last_run_completion":
         sort_column = AgentModel.last_run_completion
         sort_nulls_last = True  # TODO: handle this as a query param eventually
+    elif sort_by == "updated_at":
+        sort_column = AgentModel.updated_at
+        sort_nulls_last = False
     else:
         sort_column = AgentModel.created_at
         sort_nulls_last = False
@@ -637,6 +640,9 @@ async def _apply_pagination_async(
     if sort_by == "last_run_completion":
         sort_column = AgentModel.last_run_completion
         sort_nulls_last = True  # TODO: handle this as a query param eventually
+    elif sort_by == "updated_at":
+        sort_column = AgentModel.updated_at
+        sort_nulls_last = False
     else:
         sort_column = AgentModel.created_at
         sort_nulls_last = False

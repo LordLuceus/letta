@@ -95,6 +95,11 @@ class LLMTrace(LettaBase):
     response_json: str = Field(..., description="Full response payload as JSON string")
     llm_config_json: str = Field(default="", description="LLM config as JSON string")
 
+    # Billing context
+    billing_plan_type: Optional[str] = Field(default=None, description="Subscription tier (e.g., 'basic', 'standard', 'max', 'enterprise')")
+    billing_cost_source: Optional[str] = Field(default=None, description="Cost source: 'quota' or 'credits'")
+    billing_customer_id: Optional[str] = Field(default=None, description="Customer ID for cross-referencing billing records")
+
     # Timestamp
     created_at: datetime = Field(default_factory=get_utc_time, description="When the trace was created")
 
@@ -128,6 +133,9 @@ class LLMTrace(LettaBase):
             self.request_json,
             self.response_json,
             self.llm_config_json,
+            self.billing_plan_type or "",
+            self.billing_cost_source or "",
+            self.billing_customer_id or "",
             self.created_at,
         )
 
@@ -162,5 +170,8 @@ class LLMTrace(LettaBase):
             "request_json",
             "response_json",
             "llm_config_json",
+            "billing_plan_type",
+            "billing_cost_source",
+            "billing_customer_id",
             "created_at",
         ]

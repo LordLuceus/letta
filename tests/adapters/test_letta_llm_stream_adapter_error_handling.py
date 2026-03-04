@@ -2,6 +2,12 @@ import anthropic
 import httpx
 import openai
 import pytest
+from anthropic.types.beta import (
+    BetaMessage,
+    BetaRawMessageStartEvent,
+    BetaRawMessageStopEvent,
+    BetaUsage,
+)
 from google.genai import errors as google_errors
 
 from letta.adapters.letta_llm_stream_adapter import LettaLLMStreamAdapter
@@ -9,6 +15,7 @@ from letta.errors import (
     ContextWindowExceededError,
     LLMBadRequestError,
     LLMConnectionError,
+    LLMEmptyResponseError,
     LLMInsufficientCreditsError,
     LLMServerError,
 )
@@ -287,3 +294,70 @@ def test_openai_client_handle_llm_error_non_credit_api_error():
     result = client.handle_llm_error(error)
     assert isinstance(result, LLMBadRequestError)
     assert not isinstance(result, LLMInsufficientCreditsError)
+
+
+@pytest.mark.asyncio
+async def test_letta_llm_stream_adapter_raises_empty_response_error_for_anthropic(monkeypatch):
+    """LET-7679: Empty streaming responses (no content blocks) should raise LLMEmptyResponseError.
+
+    This tests the case where Opus 4.6 returns a response with:
+    - BetaRawMessageStartEvent (with usage tokens)
+    - BetaRawMessageStopEvent (end_turn)
+    - NO content blocks in between
+
+    This should raise LLMEmptyResponseError, not complete successfully with stop_reason=end_turn.
+    """
+
+    class FakeAsyncStream:
+        """Mimics anthropic.AsyncStream that returns empty content (no content blocks)."""
+
+        def __init__(self):
+            self.events = [
+                # Message start with some usage info
+                BetaRawMessageStartEvent(
+                    type="message_start",
+                    message=BetaMessage(
+                        id="msg_test_empty",
+                        type="message",
+                        role="assistant",
+                        content=[],  # Empty content
+                        model="claude-opus-4-6",
+                        stop_reason="end_turn",
+                        stop_sequence=None,
+                        usage=BetaUsage(input_tokens=1000, output_tokens=26, cache_creation_input_tokens=0, cache_read_input_tokens=0),
+                    ),
+                ),
+                # Message stop immediately after start - no content blocks
+                BetaRawMessageStopEvent(type="message_stop"),
+            ]
+            self.index = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.index >= len(self.events):
+                raise StopAsyncIteration
+            event = self.events[self.index]
+            self.index += 1
+            return event
+
+    async def fake_stream_async(self, request_data: dict, llm_config):
+        return FakeAsyncStream()
+
+    monkeypatch.setattr(AnthropicClient, "stream_async", fake_stream_async, raising=True)
+
+    llm_client = AnthropicClient()
+    llm_config = LLMConfig(model="claude-opus-4-6", model_endpoint_type="anthropic", context_window=200000)
+    adapter = LettaLLMStreamAdapter(llm_client=llm_client, llm_config=llm_config, call_type=LLMCallType.agent_step)
+
+    gen = adapter.invoke_llm(request_data={}, messages=[], tools=[], use_assistant_message=True)
+    with pytest.raises(LLMEmptyResponseError):
+        async for _ in gen:
+            pass

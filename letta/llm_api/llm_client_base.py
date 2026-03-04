@@ -14,7 +14,7 @@ from letta.schemas.enums import AgentType, LLMCallType, ProviderCategory
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message
 from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
-from letta.schemas.provider_trace import ProviderTrace
+from letta.schemas.provider_trace import BillingContext, ProviderTrace
 from letta.schemas.usage import LettaUsageStatistics
 from letta.services.telemetry_manager import TelemetryManager
 from letta.settings import settings
@@ -48,6 +48,7 @@ class LLMClientBase:
         self._telemetry_user_id: Optional[str] = None
         self._telemetry_compaction_settings: Optional[Dict] = None
         self._telemetry_llm_config: Optional[Dict] = None
+        self._telemetry_billing_context: Optional[BillingContext] = None
 
     def set_telemetry_context(
         self,
@@ -62,6 +63,7 @@ class LLMClientBase:
         compaction_settings: Optional[Dict] = None,
         llm_config: Optional[Dict] = None,
         actor: Optional["User"] = None,
+        billing_context: Optional[BillingContext] = None,
     ) -> None:
         """Set telemetry context for provider trace logging."""
         if actor is not None:
@@ -76,6 +78,7 @@ class LLMClientBase:
         self._telemetry_user_id = user_id
         self._telemetry_compaction_settings = compaction_settings
         self._telemetry_llm_config = llm_config
+        self._telemetry_billing_context = billing_context
 
     def extract_usage_statistics(self, response_data: Optional[dict], llm_config: LLMConfig) -> LettaUsageStatistics:
         """Provider-specific usage parsing hook (override in subclasses). Returns LettaUsageStatistics."""
@@ -125,6 +128,7 @@ class LLMClientBase:
                                 user_id=self._telemetry_user_id,
                                 compaction_settings=self._telemetry_compaction_settings,
                                 llm_config=llm_config.model_dump() if llm_config else self._telemetry_llm_config,
+                                billing_context=self._telemetry_billing_context,
                             ),
                         )
                     except Exception as e:
@@ -186,6 +190,7 @@ class LLMClientBase:
                     user_id=self._telemetry_user_id,
                     compaction_settings=self._telemetry_compaction_settings,
                     llm_config=llm_config.model_dump() if llm_config else self._telemetry_llm_config,
+                    billing_context=self._telemetry_billing_context,
                 ),
             )
         except Exception as e:

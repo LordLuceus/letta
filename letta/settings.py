@@ -114,7 +114,7 @@ class SummarizerSettings(BaseSettings):
 class ModelSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    global_max_context_window_limit: int = 32000
+    global_max_context_window_limit: int = 128000
 
     inner_thoughts_kwarg: str | None = Field(default=INNER_THOUGHTS_KWARG, description="Key used for passing in inner thoughts.")
 
@@ -204,6 +204,7 @@ class ModelSettings(BaseSettings):
     gemini_base_url: str = "https://generativelanguage.googleapis.com/"
     gemini_force_minimum_thinking_budget: bool = False
     gemini_max_retries: int = 5
+    gemini_timeout_seconds: float = 600.0
 
     # google vertex
     google_cloud_project: Optional[str] = None

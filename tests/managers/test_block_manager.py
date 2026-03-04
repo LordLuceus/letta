@@ -562,7 +562,9 @@ async def test_update_block(server: SyncServer, default_user):
 @pytest.mark.asyncio
 async def test_update_block_limit(server: SyncServer, default_user):
     block_manager = BlockManager()
-    block = await block_manager.create_or_update_block_async(PydanticBlock(label="persona", value="Original Content"), actor=default_user)
+    block = await block_manager.create_or_update_block_async(
+        PydanticBlock(label="persona", value="Original Content", limit=20000), actor=default_user
+    )
 
     limit = len("Updated Content") * 2000
     update_data = BlockUpdate(value="Updated Content" * 2000, description="Updated description")

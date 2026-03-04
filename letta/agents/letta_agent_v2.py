@@ -44,6 +44,7 @@ from letta.schemas.openai.chat_completion_response import (
     UsageStatisticsCompletionTokenDetails,
     UsageStatisticsPromptTokenDetails,
 )
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.step import Step, StepProgression
 from letta.schemas.step_metrics import StepMetrics
 from letta.schemas.tool import Tool
@@ -185,6 +186,7 @@ class LettaAgentV2(BaseAgentV2):
         request_start_timestamp_ns: int | None = None,
         client_tools: list[ClientToolSchema] | None = None,
         include_compaction_messages: bool = False,  # Not used in V2, but accepted for API compatibility
+        billing_context: "BillingContext | None" = None,
     ) -> LettaResponse:
         """
         Execute the agent loop in blocking mode, returning all messages at once.
@@ -290,6 +292,7 @@ class LettaAgentV2(BaseAgentV2):
         conversation_id: str | None = None,  # Not used in V2, but accepted for API compatibility
         client_tools: list[ClientToolSchema] | None = None,
         include_compaction_messages: bool = False,  # Not used in V2, but accepted for API compatibility
+        billing_context: BillingContext | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Execute the agent loop in streaming mode, yielding chunks as they become available.

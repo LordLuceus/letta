@@ -196,7 +196,7 @@ async def self_summarize_sliding_window(
             return message.tool_calls is not None and len(message.tool_calls) > 0
         return False
 
-    post_summarization_buffer = [system_prompt]
+    post_summarization_buffer = []
     while approx_token_count >= goal_tokens and eviction_percentage < 1.0:
         # more eviction percentage
         eviction_percentage += 0.10
@@ -217,8 +217,8 @@ async def self_summarize_sliding_window(
 
         # update token count
         logger.info(f"Attempting to compact messages to index {assistant_message_index} messages")
-        post_summarization_buffer = [system_prompt, *messages[assistant_message_index:]]
-        approx_token_count = await count_tokens(actor, agent_llm_config, post_summarization_buffer)
+        post_summarization_buffer = list(messages[assistant_message_index:])
+        approx_token_count = await count_tokens(actor, agent_llm_config, [system_prompt, *post_summarization_buffer])
         logger.info(
             f"Compacting messages index 1:{assistant_message_index} messages resulted in {approx_token_count} tokens, goal is {goal_tokens}"
         )

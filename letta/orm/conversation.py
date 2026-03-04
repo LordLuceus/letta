@@ -44,7 +44,7 @@ class Conversation(SqlalchemyBase, OrganizationMixin):
         "ConversationMessage",
         back_populates="conversation",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise",
     )
     isolated_blocks: Mapped[List["Block"]] = relationship(
         "Block",

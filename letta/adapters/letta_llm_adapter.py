@@ -7,6 +7,7 @@ from letta.schemas.letta_message import LettaMessage
 from letta.schemas.letta_message_content import ReasoningContent, RedactedReasoningContent, TextContent
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, ChoiceLogprobs, ToolCall
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
 from letta.services.telemetry_manager import TelemetryManager
@@ -31,6 +32,7 @@ class LettaLLMAdapter(ABC):
         run_id: str | None = None,
         org_id: str | None = None,
         user_id: str | None = None,
+        billing_context: BillingContext | None = None,
     ) -> None:
         self.llm_client: LLMClientBase = llm_client
         self.llm_config: LLMConfig = llm_config
@@ -40,6 +42,7 @@ class LettaLLMAdapter(ABC):
         self.run_id: str | None = run_id
         self.org_id: str | None = org_id
         self.user_id: str | None = user_id
+        self.billing_context: BillingContext | None = billing_context
         self.message_id: str | None = None
         self.request_data: dict | None = None
         self.response_data: dict | None = None

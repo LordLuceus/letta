@@ -10,7 +10,7 @@ from letta.otel.tracing import log_attributes, safe_json_dumps, trace_method
 from letta.schemas.enums import LLMCallType, ProviderType
 from letta.schemas.letta_message import LettaMessage
 from letta.schemas.llm_config import LLMConfig
-from letta.schemas.provider_trace import ProviderTrace
+from letta.schemas.provider_trace import BillingContext, ProviderTrace
 from letta.schemas.user import User
 from letta.settings import settings
 from letta.utils import safe_create_task
@@ -36,6 +36,7 @@ class LettaLLMStreamAdapter(LettaLLMAdapter):
         run_id: str | None = None,
         org_id: str | None = None,
         user_id: str | None = None,
+        billing_context: "BillingContext | None" = None,
     ) -> None:
         super().__init__(
             llm_client,
@@ -46,6 +47,7 @@ class LettaLLMStreamAdapter(LettaLLMAdapter):
             run_id=run_id,
             org_id=org_id,
             user_id=user_id,
+            billing_context=billing_context,
         )
         self.interface: OpenAIStreamingInterface | AnthropicStreamingInterface | None = None
 

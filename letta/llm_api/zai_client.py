@@ -68,6 +68,12 @@ class ZAIClient(OpenAIClient):
                     }
                 }
 
+        # Z.ai's API uses max_tokens, not max_completion_tokens.
+        # If max_completion_tokens is sent, Z.ai ignores it and falls back to its
+        # default of 65536, silently truncating input to ~137K of the 200K context window.
+        if "max_completion_tokens" in data:
+            data["max_tokens"] = data.pop("max_completion_tokens")
+
         # Sanitize empty text content — ZAI rejects empty text blocks
         if "messages" in data:
             for msg in data["messages"]:

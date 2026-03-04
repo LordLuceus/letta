@@ -48,6 +48,7 @@ from letta.schemas.openai.chat_completion_response import (
     UsageStatisticsCompletionTokenDetails,
     UsageStatisticsPromptTokenDetails,
 )
+from letta.schemas.provider_trace import BillingContext
 from letta.schemas.step import StepProgression
 from letta.schemas.step_metrics import StepMetrics
 from letta.schemas.tool_execution_result import ToolExecutionResult
@@ -179,6 +180,7 @@ class LettaAgent(BaseAgent):
         request_start_timestamp_ns: int | None = None,
         include_return_message_types: list[MessageType] | None = None,
         dry_run: bool = False,
+        billing_context: "BillingContext | None" = None,
     ) -> Union[LettaResponse, dict]:
         # TODO (cliandy): pass in run_id and use at send_message endpoints for all step functions
         agent_state = await self.agent_manager.get_agent_by_id_async(

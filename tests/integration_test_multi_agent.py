@@ -93,7 +93,7 @@ def agent_obj(client: Letta) -> AgentState:
         tool_ids=[send_message_to_agent_tool.id],
         model="openai/gpt-4o",
         embedding="openai/text-embedding-3-small",
-        context_window_limit=32000,
+        context_window_limit=128000,
     )
     yield agent_state_instance
 
@@ -107,7 +107,7 @@ def other_agent_obj(client: Letta) -> AgentState:
         include_multi_agent_tools=False,
         model="openai/gpt-4o",
         embedding="openai/text-embedding-3-small",
-        context_window_limit=32000,
+        context_window_limit=128000,
     )
 
     yield agent_state_instance
