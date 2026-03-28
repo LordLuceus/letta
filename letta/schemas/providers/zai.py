@@ -19,6 +19,8 @@ MODEL_CONTEXT_WINDOWS = {
     "glm-4.7": 180000,
     "glm-5": 180000,
     "glm-5-code": 180000,
+    "glm-5-turbo": 180000,
+    "glm-5.1": 180000,
 }
 
 
