@@ -1,7 +1,8 @@
-"""Git HTTP Smart Protocol endpoints (proxied to memfs service).
+"""Git HTTP Smart Protocol endpoints.
 
-This module proxies `/v1/git/*` requests to the external memfs service, which
-handles git smart HTTP protocol (clone, push, pull).
+When LETTA_MEMFS_SERVICE_URL is configured, requests are proxied to the
+external memfs service. Otherwise, repositories are served directly from
+local storage using git http-backend CGI.
 
 Example:
 
@@ -13,18 +14,20 @@ Routes (smart HTTP):
     GET  /v1/git/{agent_id}/state.git/info/refs?service=git-receive-pack
     POST /v1/git/{agent_id}/state.git/git-receive-pack
 
-Post-push sync to PostgreSQL is triggered from the proxy route after a
-successful `git-receive-pack`.
+Post-push sync to PostgreSQL is triggered after a successful
+`git-receive-pack`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 from typing import Dict, Iterable, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from letta.log import get_logger
@@ -238,6 +241,142 @@ def _get_memfs_service_url() -> Optional[str]:
     return settings.memfs_service_url
 
 
+def _get_local_bare_repo_path(agent_id: str, org_id: str) -> Optional[str]:
+    """Get the local bare repo path for an agent.
+
+    Returns the path if using local storage, None otherwise.
+    """
+    if _server_instance is None or _server_instance.memory_repo_manager is None:
+        return None
+    git_ops = _server_instance.memory_repo_manager.git
+    return git_ops._get_local_bare_repo_path(agent_id, org_id)
+
+
+async def _serve_local_git_http(
+    path: str,
+    request: Request,
+    server,
+    headers: HeaderParams,
+) -> Response:
+    """Serve git smart HTTP protocol from local bare repos using git http-backend CGI."""
+
+    agent_id = _parse_agent_id_from_repo_path(path)
+    if agent_id is None:
+        return JSONResponse(status_code=400, content={"detail": "Could not parse agent_id from path"})
+
+    actor = await server.user_manager.get_actor_or_default_async(actor_id=headers.actor_id)
+    await server.agent_manager.get_agent_by_id_async(agent_id=agent_id, actor=actor, include_relationships=[])
+
+    bare_repo_path = _get_local_bare_repo_path(agent_id, actor.organization_id)
+    if bare_repo_path is None or not os.path.isdir(bare_repo_path):
+        return JSONResponse(status_code=404, content={"detail": f"No repository found for agent {agent_id}"})
+
+    # The repo path in the URL is: {agent_id}/state.git/...
+    # git http-backend expects PATH_INFO relative to the project root.
+    # GIT_PROJECT_ROOT points to the directory *containing* the repo.
+    # The repo directory name as seen by git is the basename of bare_repo_path.
+    repo_parent = os.path.dirname(bare_repo_path)
+    repo_name = os.path.basename(bare_repo_path)
+
+    # Extract the sub-path after state.git (e.g., "info/refs", "git-upload-pack")
+    state_git_idx = path.find("state.git")
+    if state_git_idx == -1:
+        return JSONResponse(status_code=400, content={"detail": "Invalid git path"})
+    sub_path = path[state_git_idx + len("state.git"):]
+    path_info = f"/{repo_name}{sub_path}"
+
+    # Build CGI environment
+    cgi_env = {
+        "GIT_PROJECT_ROOT": repo_parent,
+        "GIT_HTTP_EXPORT_ALL": "1",
+        "PATH_INFO": path_info,
+        "QUERY_STRING": str(request.query_params),
+        "REQUEST_METHOD": request.method,
+        "CONTENT_TYPE": request.headers.get("content-type", ""),
+        "REMOTE_USER": headers.actor_id or "",
+        "SERVER_PROTOCOL": "HTTP/1.1",
+        # Inherit PATH so git can find itself
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+
+    # Read request body for POST
+    body = b""
+    if request.method == "POST":
+        body = await request.body()
+        cgi_env["CONTENT_LENGTH"] = str(len(body))
+
+    logger.info(
+        "local_git_http: method=%s path_info=%s agent=%s repo=%s",
+        request.method, path_info, agent_id, bare_repo_path,
+    )
+
+    # Run git http-backend CGI
+    try:
+        result = await asyncio.to_thread(
+            lambda: subprocess.run(
+                ["git", "http-backend"],
+                input=body,
+                capture_output=True,
+                env=cgi_env,
+                timeout=30,
+            )
+        )
+    except FileNotFoundError:
+        return JSONResponse(status_code=500, content={"detail": "git not found in PATH"})
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"detail": "git http-backend timed out"})
+
+    if result.returncode != 0 and not result.stdout:
+        logger.error("git http-backend failed: stderr=%s", result.stderr.decode(errors="replace"))
+        return JSONResponse(status_code=500, content={"detail": "git http-backend error"})
+
+    # Parse CGI response: headers separated from body by \r\n\r\n
+    raw_output = result.stdout
+    header_end = raw_output.find(b"\r\n\r\n")
+    if header_end == -1:
+        # Try plain \n\n as fallback
+        header_end = raw_output.find(b"\n\n")
+        if header_end == -1:
+            return Response(content=raw_output, media_type="application/octet-stream")
+        header_bytes = raw_output[:header_end]
+        body_bytes = raw_output[header_end + 2:]
+    else:
+        header_bytes = raw_output[:header_end]
+        body_bytes = raw_output[header_end + 4:]
+
+    # Parse CGI headers
+    resp_headers: Dict[str, str] = {}
+    status_code = 200
+    for line in header_bytes.decode(errors="replace").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("status:"):
+            try:
+                status_code = int(line.split(":", 1)[1].strip().split(" ")[0])
+            except (ValueError, IndexError):
+                pass
+        elif ":" in line:
+            key, value = line.split(":", 1)
+            resp_headers[key.strip()] = value.strip()
+
+    # Trigger post-push sync for receive-pack
+    if request.method == "POST" and path.endswith("git-receive-pack") and status_code < 400:
+        try:
+            task = asyncio.create_task(_sync_after_push(actor.id, agent_id))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+        except Exception:
+            logger.exception("Failed to trigger post-push sync (agent_id=%s)", agent_id)
+
+    return Response(
+        content=body_bytes,
+        status_code=status_code,
+        headers=resp_headers,
+        media_type=resp_headers.get("Content-Type", "application/octet-stream"),
+    )
+
+
 @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])  # pragma: no cover
 async def proxy_git_http(
     path: str,
@@ -245,20 +384,16 @@ async def proxy_git_http(
     server=Depends(get_letta_server),
     headers: HeaderParams = Depends(get_headers),
 ):
-    """Proxy `/v1/git/*` requests to the memfs service.
+    """Serve git smart HTTP protocol.
 
-    Requires LETTA_MEMFS_SERVICE_URL to be configured.
+    Uses the external memfs service if LETTA_MEMFS_SERVICE_URL is configured,
+    otherwise serves directly from local bare repos via git http-backend.
     """
 
     memfs_url = _get_memfs_service_url()
 
     if not memfs_url:
-        return JSONResponse(
-            status_code=501,
-            content={
-                "detail": "git HTTP requires memfs service (LETTA_MEMFS_SERVICE_URL not configured)",
-            },
-        )
+        return await _serve_local_git_http(path, request, server, headers)
 
     # Proxy to external memfs service
     url = f"{memfs_url.rstrip('/')}/git/{path}"

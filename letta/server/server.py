@@ -414,21 +414,22 @@ class SyncServer(object):
                     )
 
     def _init_memory_repo_manager(self) -> Optional[MemfsClient]:
-        """Initialize the memory repository manager if configured.
+        """Initialize the memory repository manager.
 
-        Requires LETTA_MEMFS_SERVICE_URL to be set to the external memfs service URL.
+        Uses the external memfs service if LETTA_MEMFS_SERVICE_URL is set,
+        otherwise falls back to local filesystem storage at ~/.letta/memfs/.
 
         Returns:
-            MemfsClient if configured, None otherwise
+            MemfsClient (always non-None)
         """
         from letta.settings import settings
 
-        if not settings.memfs_service_url:
-            logger.debug("Memory repo manager not configured (memfs_service_url not set)")
-            return None
+        if settings.memfs_service_url:
+            logger.info("Memory repo manager using memfs service: %s", settings.memfs_service_url)
+            return MemfsClient(base_url=settings.memfs_service_url)
 
-        logger.info("Memory repo manager using memfs service: %s", settings.memfs_service_url)
-        return MemfsClient(base_url=settings.memfs_service_url)
+        logger.info("Memory repo manager using local storage (~/.letta/memfs/)")
+        return MemfsClient()
 
     def _get_enabled_provider(self, provider_name: str) -> Optional[Provider]:
         """Find and return an enabled provider by name.

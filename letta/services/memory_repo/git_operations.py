@@ -70,6 +70,51 @@ class GitOperations:
         self.storage = storage
         self._git_available = None
 
+    def _is_local_storage(self) -> bool:
+        """Check if using local filesystem storage."""
+        from letta.services.memory_repo.storage.local import LocalStorageBackend
+        return isinstance(self.storage, LocalStorageBackend)
+
+    def _get_local_bare_repo_path(self, agent_id: str, org_id: str) -> Optional[str]:
+        """Get the filesystem path of the bare repo for local storage.
+
+        Returns None if not using local storage.
+        """
+        if not self._is_local_storage():
+            return None
+        from letta.services.memory_repo.storage.local import LocalStorageBackend
+        backend: LocalStorageBackend = self.storage  # type: ignore[assignment]
+        return str(backend._full_path(self._repo_path(agent_id, org_id)))
+
+    async def _ensure_local_bare_repo(self, agent_id: str, org_id: str) -> None:
+        """Ensure the local storage path is a valid bare repo for HTTP serving.
+
+        Runs `git update-server-info` so that `git http-backend` can serve
+        the repo over smart HTTP. Only applies to local storage backends.
+        """
+        bare_path = self._get_local_bare_repo_path(agent_id, org_id)
+        if bare_path is None:
+            return
+
+        def _update():
+            if not os.path.isdir(bare_path):
+                return
+            # Ensure it looks like a bare repo (has HEAD)
+            head_path = os.path.join(bare_path, "HEAD")
+            if not os.path.exists(head_path):
+                return
+            # Mark as bare if not already
+            config_path = os.path.join(bare_path, "config")
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    config_content = f.read()
+                if "bare = true" not in config_content:
+                    with open(config_path, "a") as f:
+                        f.write("\n[core]\n\tbare = true\n")
+            _run_git(["update-server-info"], cwd=bare_path, check=False)
+
+        await asyncio.to_thread(_update)
+
     def _check_git(self) -> None:
         """Check that git is available."""
         if self._git_available is None:
@@ -199,6 +244,8 @@ class GitOperations:
             f"upload_time={upload_time:.2f}ms"
         )
 
+        await self._ensure_local_bare_repo(agent_id, org_id)
+
     @staticmethod
     def _snapshot_git_files(git_dir: str) -> Dict[str, float]:
         """Snapshot mtime of all files under .git/ for delta detection."""
@@ -246,6 +293,8 @@ class GitOperations:
             f"files={len(upload_tasks)} bytes={total_bytes} "
             f"upload_time={upload_time:.2f}ms"
         )
+
+        await self._ensure_local_bare_repo(agent_id, org_id)
 
     async def _download_repo(self, agent_id: str, org_id: str) -> str:
         """Download a repo from storage to a temp directory.
