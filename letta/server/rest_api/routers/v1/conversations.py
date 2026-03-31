@@ -709,6 +709,57 @@ class CompactionResponse(BaseModel):
     num_messages_after: int
 
 
+@router.post("/{conversation_id}/recompile", response_model=str, operation_id="recompile_conversation")
+async def recompile_conversation(
+    conversation_id: ConversationIdOrDefault,
+    server: SyncServer = Depends(get_letta_server),
+    headers: HeaderParams = Depends(get_headers),
+    agent_id: Optional[str] = Query(None, description="Agent ID (required when conversation_id is 'default')"),
+    dry_run: bool = Query(False, description="If True, do not persist changes; still returns the compiled system prompt."),
+):
+    """Recompile the system prompt for a conversation.
+
+    Rebuilds the system message with the latest memory block values.
+    For conversation_id='default', pass agent_id as a query parameter.
+    """
+    actor = await server.user_manager.get_actor_or_default_async(actor_id=headers.actor_id)
+
+    # Resolve agent_id from conversation or query param
+    resolved_agent_id = agent_id
+    if conversation_id == "default":
+        if not agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="agent_id query parameter is required when conversation_id is 'default'",
+            )
+        resolved_agent_id = agent_id
+    elif conversation_id.startswith("agent-"):
+        # Backwards compat: agent ID passed as conversation_id
+        resolved_agent_id = conversation_id
+    else:
+        conversation = await conversation_manager.get_conversation_by_id(
+            conversation_id=conversation_id,
+            actor=actor,
+        )
+        resolved_agent_id = conversation.agent_id
+
+    _, system_message, _, _ = await server.agent_manager.rebuild_system_prompt_async(
+        agent_id=resolved_agent_id,
+        actor=actor,
+        force=True,
+        update_timestamp=True,
+        dry_run=dry_run,
+    )
+
+    if system_message is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No system message found for agent '{resolved_agent_id}'",
+        )
+
+    return system_message.to_openai_dict().get("content", "")
+
+
 @router.post("/{conversation_id}/compact", response_model=CompactionResponse, operation_id="compact_conversation")
 async def compact_conversation(
     conversation_id: ConversationIdOrDefault,
