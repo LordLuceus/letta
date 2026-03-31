@@ -103,14 +103,16 @@ class GitOperations:
             head_path = os.path.join(bare_path, "HEAD")
             if not os.path.exists(head_path):
                 return
-            # Mark as bare if not already
             config_path = os.path.join(bare_path, "config")
             if os.path.exists(config_path):
                 with open(config_path, "r") as f:
                     config_content = f.read()
+                # Mark as bare if not already
                 if "bare = true" not in config_content:
-                    with open(config_path, "a") as f:
-                        f.write("\n[core]\n\tbare = true\n")
+                    _run_git(["config", "core.bare", "true"], cwd=bare_path, check=False)
+                # Enable receive-pack so git http-backend accepts pushes
+                if "receivepack" not in config_content:
+                    _run_git(["config", "http.receivepack", "true"], cwd=bare_path, check=False)
             _run_git(["update-server-info"], cwd=bare_path, check=False)
 
         await asyncio.to_thread(_update)
