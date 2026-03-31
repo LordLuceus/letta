@@ -35,7 +35,11 @@ class CheckPasswordMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
+        # Include WWW-Authenticate header so git clients know to send
+        # Basic credentials on retry (git sends unauthenticated discovery
+        # requests first and relies on a 401 + WWW-Authenticate challenge).
         return JSONResponse(
             content={"detail": "Unauthorized"},
             status_code=401,
+            headers={"WWW-Authenticate": "Basic realm=\"letta\""},
         )
