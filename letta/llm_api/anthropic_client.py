@@ -66,47 +66,44 @@ class AnthropicClient(LLMClientBase):
     def request(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = self._get_anthropic_client(llm_config, async_client=False)
         betas: list[str] = []
+        model = llm_config.model
 
-        # Opus 4.6 / Sonnet 4.6 Auto Thinking
+        # Thinking betas
         if llm_config.enable_reasoner:
-            if llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6"):
+            if _is_ga_adaptive(model):
+                pass  # Opus 4.7+: adaptive thinking is GA, no beta needed
+            elif _uses_adaptive_thinking(model):
                 betas.append("adaptive-thinking-2026-01-28")
-            # Interleaved thinking for other reasoners (sync path parity)
             else:
                 betas.append("interleaved-thinking-2025-05-14")
 
         # 1M context beta for Sonnet 4/4.5 or Opus 4.6 when enabled
+        # Opus 4.7 has native 1M at standard pricing (no beta needed)
         try:
             from letta.settings import model_settings
 
             if model_settings.anthropic_sonnet_1m and (
-                llm_config.model.startswith("claude-sonnet-4") or llm_config.model.startswith("claude-sonnet-4-5")
+                model.startswith("claude-sonnet-4") or model.startswith("claude-sonnet-4-5")
             ):
                 betas.append("context-1m-2025-08-07")
-            elif model_settings.anthropic_opus_1m and llm_config.model.startswith("claude-opus-4-6"):
+            elif model_settings.anthropic_opus_1m and model.startswith("claude-opus-4-6"):
                 betas.append("context-1m-2025-08-07")
         except Exception:
             pass
 
-        # Effort parameter for Opus 4.5, Opus 4.6, and Sonnet 4.6 - to extend to other models, modify the model check
-        if (
-            llm_config.model.startswith("claude-opus-4-5")
-            or llm_config.model.startswith("claude-opus-4-6")
-            or llm_config.model.startswith("claude-sonnet-4-6")
-        ) and llm_config.effort is not None:
+        # Effort parameter
+        if _needs_effort_beta(model) and llm_config.effort is not None:
             betas.append("effort-2025-11-24")
-            # Max effort beta for Opus 4.6 / Sonnet 4.6
-            if (
-                llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6")
-            ) and llm_config.effort == "max":
+            if (model.startswith("claude-opus-4-6") or model.startswith("claude-sonnet-4-6")) and llm_config.effort == "max":
                 betas.append("max-effort-2026-01-24")
+        # Opus 4.7+: effort is GA, no beta needed
 
         # Context management for Opus 4.5 to preserve thinking blocks (improves cache hits)
-        if llm_config.model.startswith("claude-opus-4-5") and llm_config.enable_reasoner:
+        if model.startswith("claude-opus-4-5") and llm_config.enable_reasoner:
             betas.append("context-management-2025-06-27")
 
         # Structured outputs beta - only when strict is enabled and model supports it
-        if llm_config.strict and _supports_structured_outputs(llm_config.model):
+        if llm_config.strict and _supports_structured_outputs(model):
             betas.append("structured-outputs-2025-11-13")
 
         try:
@@ -139,47 +136,44 @@ class AnthropicClient(LLMClientBase):
 
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         betas: list[str] = []
+        model = llm_config.model
 
-        # Opus 4.6 / Sonnet 4.6 Auto Thinking
+        # Thinking betas
         if llm_config.enable_reasoner:
-            if llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6"):
+            if _is_ga_adaptive(model):
+                pass  # Opus 4.7+: adaptive thinking is GA, no beta needed
+            elif _uses_adaptive_thinking(model):
                 betas.append("adaptive-thinking-2026-01-28")
-            # Interleaved thinking for other reasoners (sync path parity)
             else:
                 betas.append("interleaved-thinking-2025-05-14")
 
         # 1M context beta for Sonnet 4/4.5 or Opus 4.6 when enabled
+        # Opus 4.7 has native 1M at standard pricing (no beta needed)
         try:
             from letta.settings import model_settings
 
             if model_settings.anthropic_sonnet_1m and (
-                llm_config.model.startswith("claude-sonnet-4") or llm_config.model.startswith("claude-sonnet-4-5")
+                model.startswith("claude-sonnet-4") or model.startswith("claude-sonnet-4-5")
             ):
                 betas.append("context-1m-2025-08-07")
-            elif model_settings.anthropic_opus_1m and llm_config.model.startswith("claude-opus-4-6"):
+            elif model_settings.anthropic_opus_1m and model.startswith("claude-opus-4-6"):
                 betas.append("context-1m-2025-08-07")
         except Exception:
             pass
 
-        # Effort parameter for Opus 4.5, Opus 4.6, and Sonnet 4.6 - to extend to other models, modify the model check
-        if (
-            llm_config.model.startswith("claude-opus-4-5")
-            or llm_config.model.startswith("claude-opus-4-6")
-            or llm_config.model.startswith("claude-sonnet-4-6")
-        ) and llm_config.effort is not None:
+        # Effort parameter
+        if _needs_effort_beta(model) and llm_config.effort is not None:
             betas.append("effort-2025-11-24")
-            # Max effort beta for Opus 4.6 / Sonnet 4.6
-            if (
-                llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6")
-            ) and llm_config.effort == "max":
+            if (model.startswith("claude-opus-4-6") or model.startswith("claude-sonnet-4-6")) and llm_config.effort == "max":
                 betas.append("max-effort-2026-01-24")
+        # Opus 4.7+: effort is GA, no beta needed
 
         # Context management for Opus 4.5 to preserve thinking blocks (improves cache hits)
-        if llm_config.model.startswith("claude-opus-4-5") and llm_config.enable_reasoner:
+        if model.startswith("claude-opus-4-5") and llm_config.enable_reasoner:
             betas.append("context-management-2025-06-27")
 
         # Structured outputs beta - only when strict is enabled and model supports it
-        if llm_config.strict and _supports_structured_outputs(llm_config.model):
+        if llm_config.strict and _supports_structured_outputs(model):
             betas.append("structured-outputs-2025-11-13")
 
         try:
@@ -321,47 +315,44 @@ class AnthropicClient(LLMClientBase):
         # This helps reduce buffering when streaming tool call parameters
         # See: https://docs.anthropic.com/en/docs/build-with-claude/tool-use/fine-grained-streaming
         betas = ["fine-grained-tool-streaming-2025-05-14"]
+        model = llm_config.model
 
-        # Opus 4.6 / Sonnet 4.6 Auto Thinking
+        # Thinking betas
         if llm_config.enable_reasoner:
-            if llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6"):
+            if _is_ga_adaptive(model):
+                pass  # Opus 4.7+: adaptive thinking is GA, no beta needed
+            elif _uses_adaptive_thinking(model):
                 betas.append("adaptive-thinking-2026-01-28")
-            # Interleaved thinking for other reasoners (sync path parity)
             else:
                 betas.append("interleaved-thinking-2025-05-14")
 
         # 1M context beta for Sonnet 4/4.5 or Opus 4.6 when enabled
+        # Opus 4.7 has native 1M at standard pricing (no beta needed)
         try:
             from letta.settings import model_settings
 
             if model_settings.anthropic_sonnet_1m and (
-                llm_config.model.startswith("claude-sonnet-4") or llm_config.model.startswith("claude-sonnet-4-5")
+                model.startswith("claude-sonnet-4") or model.startswith("claude-sonnet-4-5")
             ):
                 betas.append("context-1m-2025-08-07")
-            elif model_settings.anthropic_opus_1m and llm_config.model.startswith("claude-opus-4-6"):
+            elif model_settings.anthropic_opus_1m and model.startswith("claude-opus-4-6"):
                 betas.append("context-1m-2025-08-07")
         except Exception:
             pass
 
-        # Effort parameter for Opus 4.5, Opus 4.6, and Sonnet 4.6 - to extend to other models, modify the model check
-        if (
-            llm_config.model.startswith("claude-opus-4-5")
-            or llm_config.model.startswith("claude-opus-4-6")
-            or llm_config.model.startswith("claude-sonnet-4-6")
-        ) and llm_config.effort is not None:
+        # Effort parameter
+        if _needs_effort_beta(model) and llm_config.effort is not None:
             betas.append("effort-2025-11-24")
-            # Max effort beta for Opus 4.6 / Sonnet 4.6
-            if (
-                llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6")
-            ) and llm_config.effort == "max":
+            if (model.startswith("claude-opus-4-6") or model.startswith("claude-sonnet-4-6")) and llm_config.effort == "max":
                 betas.append("max-effort-2026-01-24")
+        # Opus 4.7+: effort is GA, no beta needed
 
         # Context management for Opus 4.5 to preserve thinking blocks (improves cache hits)
-        if llm_config.model.startswith("claude-opus-4-5") and llm_config.enable_reasoner:
+        if model.startswith("claude-opus-4-5") and llm_config.enable_reasoner:
             betas.append("context-management-2025-06-27")
 
         # Structured outputs beta - only when strict is enabled and model supports it
-        if llm_config.strict and _supports_structured_outputs(llm_config.model):
+        if llm_config.strict and _supports_structured_outputs(model):
             betas.append("structured-outputs-2025-11-13")
 
         # log failed requests
@@ -532,8 +523,11 @@ class AnthropicClient(LLMClientBase):
         data = {
             "model": model_name,
             "max_tokens": max_output_tokens,
-            "temperature": llm_config.temperature,
         }
+
+        # Opus 4.7+ rejects non-default temperature/top_p/top_k entirely
+        if not _rejects_sampling_params(model_name):
+            data["temperature"] = llm_config.temperature
 
         # Extended Thinking
         # Note: Anthropic does not allow thinking when forcing tool use with split_thread_agent
@@ -544,13 +538,13 @@ class AnthropicClient(LLMClientBase):
         )
 
         if should_enable_thinking:
-            # Opus 4.6 / Sonnet 4.6 uses Auto Thinking (no budget tokens)
-            if llm_config.model.startswith("claude-opus-4-6") or llm_config.model.startswith("claude-sonnet-4-6"):
+            if _uses_adaptive_thinking(model_name):
+                # Opus 4.6+, Sonnet 4.6 use adaptive thinking (no budget tokens)
                 data["thinking"] = {
                     "type": "adaptive",
                 }
             else:
-                # Traditional extended thinking with budget tokens
+                # Traditional extended thinking with budget tokens (pre-4.6 models)
                 thinking_budget = max(llm_config.max_reasoning_tokens, 1024)
                 if thinking_budget != llm_config.max_reasoning_tokens:
                     logger.warning(
@@ -560,19 +554,17 @@ class AnthropicClient(LLMClientBase):
                     "type": "enabled",
                     "budget_tokens": thinking_budget,
                 }
-            # `temperature` may only be set to 1 when thinking is enabled. Please consult our documentation at https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking'
-            data["temperature"] = 1.0
+
+            if not _rejects_sampling_params(model_name):
+                # `temperature` may only be set to 1 when thinking is enabled on pre-4.7 models
+                # (Opus 4.7+ already has temperature omitted above)
+                data["temperature"] = 1.0
 
             # Silently disable prefix_fill for now
             prefix_fill = False
 
-        # Effort configuration for Opus 4.5, Opus 4.6, and Sonnet 4.6 (controls token spending)
-        # To extend to other models, modify the model check
-        if (
-            llm_config.model.startswith("claude-opus-4-5")
-            or llm_config.model.startswith("claude-opus-4-6")
-            or llm_config.model.startswith("claude-sonnet-4-6")
-        ) and llm_config.effort is not None:
+        # Effort configuration (controls token spending / thinking depth)
+        if _supports_effort(model_name) and llm_config.effort is not None:
             data["output_config"] = {"effort": llm_config.effort}
 
         # Context management for Opus 4.5 to preserve thinking blocks and improve cache hits
@@ -1384,6 +1376,47 @@ class AnthropicClient(LLMClientBase):
                 return messages
 
         return messages
+
+
+def _uses_adaptive_thinking(model: str) -> bool:
+    """Check if the model uses adaptive thinking (type: adaptive) vs legacy extended thinking (type: enabled)."""
+    return (
+        model.startswith("claude-opus-4-6")
+        or model.startswith("claude-opus-4-7")
+        or model.startswith("claude-sonnet-4-6")
+    )
+
+
+def _is_ga_adaptive(model: str) -> bool:
+    """Check if the model uses GA adaptive thinking (no beta header needed).
+
+    Opus 4.7+ has adaptive thinking as a GA feature — no beta headers required.
+    Opus 4.6 and Sonnet 4.6 still need the adaptive-thinking beta header.
+    """
+    return model.startswith("claude-opus-4-7")
+
+
+def _rejects_sampling_params(model: str) -> bool:
+    """Check if the model rejects non-default temperature/top_p/top_k (returns 400).
+
+    Opus 4.7+ does not accept any sampling parameters.
+    """
+    return model.startswith("claude-opus-4-7")
+
+
+def _supports_effort(model: str) -> bool:
+    """Check if the model supports the effort parameter (via output_config)."""
+    return (
+        model.startswith("claude-opus-4-5")
+        or model.startswith("claude-opus-4-6")
+        or model.startswith("claude-opus-4-7")
+        or model.startswith("claude-sonnet-4-6")
+    )
+
+
+def _needs_effort_beta(model: str) -> bool:
+    """Check if effort requires a beta header. GA on Opus 4.7+, beta on earlier models."""
+    return _supports_effort(model) and not model.startswith("claude-opus-4-7")
 
 
 def _supports_structured_outputs(model: str) -> bool:
