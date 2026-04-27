@@ -15,6 +15,7 @@ from .letta import LettaProvider
 from .lmstudio import LMStudioOpenAIProvider
 from .minimax import MiniMaxProvider
 from .mistral import MistralProvider
+from .moonshot import MoonshotProvider
 from .ollama import OllamaProvider
 from .openai import OpenAIProvider
 from .openrouter import OpenRouterProvider
@@ -39,6 +40,7 @@ __all__ = [
     "LettaProvider",
     "MiniMaxProvider",
     "MistralProvider",
+    "MoonshotProvider",
     "OllamaProvider",
     "OpenAIProvider",
     "OpenRouterProvider",

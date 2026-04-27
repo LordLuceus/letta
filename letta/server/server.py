@@ -57,6 +57,7 @@ from letta.schemas.providers import (
     LettaProvider,
     LMStudioOpenAIProvider,
     MiniMaxProvider,
+    MoonshotProvider,
     OllamaProvider,
     OpenAIProvider,
     OpenRouterProvider,
@@ -332,6 +333,13 @@ class SyncServer(object):
                 DeepSeekProvider(
                     name="deepseek",
                     api_key_enc=Secret.from_plaintext(model_settings.deepseek_api_key),
+                )
+            )
+        if model_settings.moonshot_api_key:
+            self._enabled_providers.append(
+                MoonshotProvider(
+                    name="moonshot",
+                    api_key_enc=Secret.from_plaintext(model_settings.moonshot_api_key),
                 )
             )
         if model_settings.xai_api_key:

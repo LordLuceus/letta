@@ -157,6 +157,9 @@ class ModelSettings(BaseSettings):
     fireworks_api_key: Optional[str] = None
     fireworks_api_base: str = "https://api.fireworks.ai/inference/v1"
 
+    # Moonshot AI / Kimi
+    moonshot_api_key: Optional[str] = None
+
     # xAI / Grok
     xai_api_key: Optional[str] = None
 

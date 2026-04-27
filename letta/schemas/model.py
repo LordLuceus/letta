@@ -48,6 +48,7 @@ class Model(LLMConfig, ModelBase):
         "together",
         "bedrock",
         "deepseek",
+        "moonshot",
         "xai",
         "zai",
         "zai_coding",
@@ -393,6 +394,24 @@ class XAIModelSettings(ModelSettings):
         }
 
 
+class MoonshotModelSettings(ModelSettings):
+    """Moonshot AI (Kimi) model configuration (OpenAI-compatible).
+
+    K2.x models require fixed temperature/top_p values — the client
+    strips them from requests. We omit temperature here since the API
+    enforces its own defaults.
+    """
+
+    provider_type: Literal[ProviderType.moonshot] = Field(ProviderType.moonshot, description="The type of the provider.")
+
+    def _to_legacy_config_params(self) -> dict:
+        return {
+            "max_tokens": self.max_output_tokens,
+            "parallel_tool_calls": self.parallel_tool_calls,
+            "strict": False,  # Moonshot does not support strict mode
+        }
+
+
 class ZAIThinking(BaseModel):
     """Thinking configuration for ZAI GLM-4.5+ models."""
 
@@ -556,6 +575,7 @@ ModelSettingsUnion = Annotated[
         GoogleVertexModelSettings,
         AzureModelSettings,
         XAIModelSettings,
+        MoonshotModelSettings,
         ZAIModelSettings,
         GroqModelSettings,
         DeepseekModelSettings,

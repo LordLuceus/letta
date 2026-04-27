@@ -67,6 +67,7 @@ class ProviderType(str, Enum):
     lmstudio_openai = "lmstudio_openai"
     minimax = "minimax"
     mistral = "mistral"
+    moonshot = "moonshot"
     ollama = "ollama"
     openai = "openai"
     together = "together"

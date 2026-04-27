@@ -115,6 +115,13 @@ class LLMClient:
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
                 )
+            case ProviderType.moonshot:
+                from letta.llm_api.moonshot_client import MoonshotClient
+
+                return MoonshotClient(
+                    put_inner_thoughts_first=put_inner_thoughts_first,
+                    actor=actor,
+                )
             case ProviderType.baseten:
                 from letta.llm_api.baseten_client import BasetenClient
 

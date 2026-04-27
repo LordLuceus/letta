@@ -50,6 +50,7 @@ class LLMConfig(BaseModel):
         "together",  # completions endpoint
         "bedrock",
         "deepseek",
+        "moonshot",
         "xai",
         "zai",
         "zai_coding",
@@ -375,6 +376,7 @@ class LLMConfig(BaseModel):
             OpenRouterModelSettings,
             SGLangModelSettings,
             TogetherModelSettings,
+            MoonshotModelSettings,
             XAIModelSettings,
             ZAIModelSettings,
         )
@@ -450,6 +452,10 @@ class LLMConfig(BaseModel):
             return DeepseekModelSettings(
                 max_output_tokens=self.max_tokens or 4096,
                 temperature=self.temperature,
+            )
+        elif self.model_endpoint_type == "moonshot":
+            return MoonshotModelSettings(
+                max_output_tokens=self.max_tokens or 32768,
             )
         elif self.model_endpoint_type == "together":
             return TogetherModelSettings(

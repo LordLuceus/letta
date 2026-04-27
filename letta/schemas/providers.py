@@ -117,6 +117,9 @@ class Provider(ProviderBase):
                 return VLLMCompletionsProvider(**self.model_dump(exclude_none=True))
             case ProviderType.xai:
                 return XAIProvider(**self.model_dump(exclude_none=True))
+            case ProviderType.moonshot:
+                from letta.schemas.providers.moonshot import MoonshotProvider as MoonshotProviderNew
+                return MoonshotProviderNew(**self.model_dump(exclude_none=True))
             case _:
                 raise ValueError(f"Unknown provider type: {self.provider_type}")
 
