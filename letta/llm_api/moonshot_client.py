@@ -19,6 +19,12 @@ def _is_k2_model(model: str) -> bool:
     return model.startswith("kimi-k2")
 
 
+# Placeholder reasoning_content used to backfill historical assistant tool-call
+# messages so the Moonshot K2 thinking API accepts the request. A single space
+# is the minimal non-empty string the API will accept.
+_REASONING_CONTENT_PLACEHOLDER = " "
+
+
 class MoonshotClient(OpenAIClient):
     """
     LLM client for Moonshot AI (Kimi) models.
@@ -31,6 +37,14 @@ class MoonshotClient(OpenAIClient):
     - n must be 1; other values error
 
     We strip these params and let the API use its own defaults.
+
+    Kimi K2.x thinking models additionally require ``reasoning_content`` on every
+    assistant message that contains ``tool_calls``. Old conversation history (or
+    runs that started before thinking was enabled) won't have this field, which
+    causes the API to return 400 "thinking is enabled but reasoning_content is
+    missing in assistant tool call message at index N". We backfill a placeholder
+    on any tool-call assistant message that lacks it so multi-turn tool calling
+    works against thinking-capable K2 models.
     """
 
     def requires_auto_tool_choice(self, llm_config: LLMConfig) -> bool:
@@ -74,6 +88,18 @@ class MoonshotClient(OpenAIClient):
             data.pop("frequency_penalty", None)
             data.pop("presence_penalty", None)
             data.pop("n", None)
+
+            # Backfill reasoning_content on assistant tool-call messages that
+            # lack it. K2 thinking models reject the request otherwise.
+            for msg in data.get("messages", []):
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("role") != "assistant":
+                    continue
+                if not msg.get("tool_calls"):
+                    continue
+                if not msg.get("reasoning_content"):
+                    msg["reasoning_content"] = _REASONING_CONTENT_PLACEHOLDER
 
         return data
 
