@@ -7,11 +7,14 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
 from letta.helpers.json_helpers import sanitize_unicode_surrogates
 from letta.llm_api.openai_client import OpenAIClient
+from letta.log import get_logger
 from letta.otel.tracing import trace_method
 from letta.schemas.enums import AgentType
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.settings import model_settings
+
+logger = get_logger(__name__)
 
 
 def _is_k2_model(model: str) -> bool:
@@ -23,6 +26,84 @@ def _is_k2_model(model: str) -> bool:
 # messages so the Moonshot K2 thinking API accepts the request. A single space
 # is the minimal non-empty string the API will accept.
 _REASONING_CONTENT_PLACEHOLDER = " "
+
+
+def _sanitize_orphan_tool_calls(messages: list) -> list:
+    """Drop assistant tool_calls without matching tool responses, and tool messages
+    without matching assistant tool_calls.
+
+    Moonshot (and OpenAI proper) reject any request where an assistant message's
+    ``tool_calls`` array contains an id that no subsequent ``tool`` message
+    responds to. Compaction, mid-run interruptions, or storage drift can leave
+    such orphans. This function removes them defensively so the request shape
+    is always valid.
+
+    Order of remaining messages is preserved. Mutates message dicts in-place
+    where it can; returns a new list with any fully-orphan tool messages removed.
+
+    Returns the (possibly filtered) list of message dicts.
+    """
+    if not messages:
+        return messages
+
+    # Pass 1: collect every tool_call_id that has a matching tool response.
+    responded_ids: set[str] = set()
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "tool":
+            continue
+        tcid = msg.get("tool_call_id")
+        if isinstance(tcid, str):
+            responded_ids.add(tcid)
+
+    dropped_calls = 0
+    dropped_tool_msgs = 0
+
+    # Pass 2: for each assistant message, drop tool_calls whose id has no response.
+    # Track which tool_call_ids survive so we can drop orphan tool messages too.
+    surviving_call_ids: set[str] = set()
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            continue
+        kept = []
+        for tc in tool_calls:
+            tcid = tc.get("id") if isinstance(tc, dict) else None
+            if isinstance(tcid, str) and tcid in responded_ids:
+                kept.append(tc)
+                surviving_call_ids.add(tcid)
+            else:
+                dropped_calls += 1
+        if len(kept) != len(tool_calls):
+            if kept:
+                msg["tool_calls"] = kept
+            else:
+                # All tool_calls were orphans. Drop the field entirely and ensure
+                # content is a non-None string so the assistant message stays valid.
+                msg.pop("tool_calls", None)
+                if msg.get("content") is None:
+                    msg["content"] = ""
+
+    # Pass 3: drop tool messages that don't correspond to any surviving tool_call.
+    cleaned: list = []
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "tool":
+            tcid = msg.get("tool_call_id")
+            if not isinstance(tcid, str) or tcid not in surviving_call_ids:
+                dropped_tool_msgs += 1
+                continue
+        cleaned.append(msg)
+
+    if dropped_calls or dropped_tool_msgs:
+        logger.warning(
+            "[Moonshot] Sanitized orphan tool references before request: "
+            "dropped_tool_calls=%d, dropped_tool_messages=%d",
+            dropped_calls,
+            dropped_tool_msgs,
+        )
+
+    return cleaned
 
 
 class MoonshotClient(OpenAIClient):
@@ -89,8 +170,18 @@ class MoonshotClient(OpenAIClient):
             data.pop("presence_penalty", None)
             data.pop("n", None)
 
+        # Drop orphan tool_calls / tool messages so the request can't 400 with
+        # "an assistant message with 'tool_calls' must be followed by tool
+        # messages responding to each 'tool_call_id'". Run for ALL Moonshot
+        # models (K2 and v1) since this is a Moonshot-wide validation.
+        if "messages" in data:
+            data["messages"] = _sanitize_orphan_tool_calls(data["messages"])
+
+        if _is_k2_model(model):
             # Backfill reasoning_content on assistant tool-call messages that
             # lack it. K2 thinking models reject the request otherwise.
+            # Run AFTER orphan sanitization so we only backfill on surviving
+            # tool_call assistants.
             for msg in data.get("messages", []):
                 if not isinstance(msg, dict):
                     continue
