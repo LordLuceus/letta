@@ -2533,14 +2533,32 @@ class Message(BaseMessage):
 
     @staticmethod
     def dedupe_tool_messages_for_llm_api(messages: List[Message]) -> List[Message]:
-        """Dedupe duplicate tool returns across tool-role messages by tool_call_id.
+        """Dedupe duplicate tool returns within a single tool-batch by tool_call_id.
 
-        - For explicit tool_returns arrays: keep the first occurrence of each tool_call_id,
-          drop subsequent duplicates within the request.
-        - For legacy single tool_call_id + content messages: keep the first, drop duplicates.
-        - If a tool message has neither unique tool_returns nor content, drop it.
+        A "tool batch" is a run of consecutive tool-role messages between two
+        non-tool messages (typically the assistant message that emitted the
+        tool_calls and whatever comes after). Within one batch, every
+        tool_call_id must be unique because they all answer the same assistant.
 
-        This runs prior to provider-specific formatting to reduce duplicate tool_result blocks downstream.
+        Across separate batches, the same tool_call_id may legitimately recur
+        because some clients (e.g. Letta Code) reset their tool_call_id counter
+        per session and IDs collide over long histories. We MUST NOT treat
+        those as duplicates — dropping the second batch's tool message orphans
+        the second assistant's tool_call and causes strict OpenAI-compat
+        providers (Moonshot) to reject the request with 400 "an assistant
+        message with 'tool_calls' must be followed by tool messages responding
+        to each 'tool_call_id'".
+
+        Behavior:
+        - Within a batch, keep the first occurrence of each tool_call_id
+          (handles both explicit `tool_returns` arrays and legacy
+          single-response messages).
+        - Reset the dedup window whenever we leave a tool-message run.
+        - If a tool message has neither unique tool_returns nor content after
+          deduplication, drop it.
+
+        This runs prior to provider-specific formatting to reduce duplicate
+        tool_result blocks downstream.
         """
         if not messages:
             return messages
@@ -2556,6 +2574,8 @@ class Message(BaseMessage):
 
         for m in messages:
             if m.role != MessageRole.tool:
+                # Leaving (or never entering) a tool-batch — reset dedup window.
+                seen_ids = set()
                 result.append(m)
                 continue
 
