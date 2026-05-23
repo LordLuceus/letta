@@ -51,8 +51,10 @@ async def build_summarizer_llm_config(
     then apply any explicit ``compaction_settings.model_settings`` via
     ``_to_legacy_config_params``.
 
-    For auto mode agents, routes summarization to Haiku 4.5 instead of the
-    agent's model, falling back to zai/glm-5 if Haiku is unavailable.
+    For auto-mode agents (or stale ``compaction_settings.model = "letta/auto"``
+    written by clients like Letta Code v0.19.0+), the agent's own LLMConfig
+    is used. This avoids depending on hardcoded model handles that age out
+    or require specific providers to be configured.
 
     Args:
         agent_llm_config: The agent's LLM configuration to use as base.
@@ -62,19 +64,16 @@ async def build_summarizer_llm_config(
     Returns:
         LLMConfig configured for summarization.
     """
-    # Auto mode agents: route summarization to Haiku 4.5 instead of the LLM router's
-    # default (GLM-5). Haiku is cheaper and well-suited for summarization.
+    # Fork patch: any "letta/auto*" handle — whether on the agent itself or
+    # written into compaction_settings.model by clients — collapses to "use
+    # the agent's own model". This replaces the upstream Haiku→Z.ai hardcoded
+    # fallback chain, which silently breaks self-hosted servers whose
+    # currently-funded provider isn't on that list. Single source of truth:
+    # the agent's configured llm_config.
     if agent_llm_config.handle and agent_llm_config.handle.startswith("letta/auto"):
-        from letta.services.provider_manager import ProviderManager
-
-        try:
-            return await ProviderManager().get_llm_config_from_handle("anthropic/claude-haiku-4-5", actor)
-        except Exception as e:
-            logger.warning(f"Failed to resolve haiku for auto mode summarizer: {e}. Falling back to zai/glm-5.")
-            try:
-                return await ProviderManager().get_llm_config_from_handle("zai/glm-5", actor)
-            except Exception:
-                pass
+        return agent_llm_config
+    if summarizer_config.model and summarizer_config.model.startswith("letta/auto"):
+        return agent_llm_config
 
     # If no summarizer model specified, use lightweight provider-specific defaults
     if not summarizer_config.model:
@@ -93,27 +92,16 @@ async def build_summarizer_llm_config(
 
         provider_manager = ProviderManager()
 
-        # If the summarizer model is an auto mode handle, resolve to haiku
-        # (safety net for stale compaction_settings that still reference letta/auto)
-        if summarizer_config.model and summarizer_config.model.startswith("letta/auto"):
-            try:
-                base = await provider_manager.get_llm_config_from_handle("anthropic/claude-haiku-4-5", actor)
-            except Exception as e:
-                logger.warning(
-                    f"Failed to resolve haiku for auto mode summarizer handle '{summarizer_config.model}': {e}. Falling back to zai/glm-5."
-                )
-                base = await provider_manager.get_llm_config_from_handle("zai/glm-5", actor)
-        else:
-            try:
-                base = await provider_manager.get_llm_config_from_handle(
-                    handle=summarizer_config.model,
-                    actor=actor,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load LLM config for summarizer handle '{summarizer_config.model}': {e}. Falling back to agent's LLM config."
-                )
-                return agent_llm_config
+        try:
+            base = await provider_manager.get_llm_config_from_handle(
+                handle=summarizer_config.model,
+                actor=actor,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to load LLM config for summarizer handle '{summarizer_config.model}': {e}. Falling back to agent's LLM config."
+            )
+            return agent_llm_config
 
         # If explicit model_settings are provided for the summarizer, apply
         # them just like server.create_agent_async does for agents.

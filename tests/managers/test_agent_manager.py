@@ -364,6 +364,53 @@ async def test_compaction_settings_model_uses_separate_llm_config_for_summarizat
 
 
 @pytest.mark.asyncio
+async def test_compaction_settings_letta_auto_routes_to_agent_model(server: SyncServer, default_user):
+    """When compaction_settings.model is "letta/auto" (or any letta/auto-* handle),
+    the summarizer should use the agent's own LLMConfig rather than reaching
+    for hardcoded Haiku→Z.ai fallbacks.
+
+    Letta Code (v0.19.0+) writes ``compaction_settings.model = "letta/auto"``
+    to every agent it touches. The previous server-side behavior tried
+    ``anthropic/claude-haiku-4-5`` first, then ``zai/glm-5``, then bailed.
+    This was brittle (hardcoded handles age out; failures depended on which
+    of those two providers had credit). The simpler, futureproof rule:
+    treat ``letta/auto`` as "use the agent's configured model".
+    """
+
+    from letta.services.summarizer.compact import build_summarizer_llm_config
+
+    await server.init_async(init_with_default_org_and_user=True)
+
+    # Base agent LLM config — anything, not Haiku, not Z.ai.
+    agent_llm_config = LLMConfig.default_config("gpt-4o-mini")
+
+    for handle in ("letta/auto", "letta/auto-fast", "letta/auto-chat"):
+        summarizer_config = CompactionSettings(
+            model=handle,
+            mode="sliding_window",
+            sliding_window_percentage=0.3,
+            clip_chars=2000,
+            prompt_acknowledgement=False,
+        )
+
+        summarizer_llm_config = await build_summarizer_llm_config(
+            agent_llm_config=agent_llm_config,
+            summarizer_config=summarizer_config,
+            actor=default_user,
+        )
+
+        # The summarizer should reuse the agent's own LLMConfig, NOT
+        # reach for hardcoded Haiku/Z.ai handles. We don't require object
+        # identity (the function may copy/mutate flags like enable_reasoner),
+        # but model and provider must match the agent's.
+        assert summarizer_llm_config.model == agent_llm_config.model, (
+            f"With compaction_settings.model={handle!r}, summarizer should use "
+            f"agent's model ({agent_llm_config.model!r}), got {summarizer_llm_config.model!r}"
+        )
+        assert summarizer_llm_config.model_endpoint_type == agent_llm_config.model_endpoint_type
+
+
+@pytest.mark.asyncio
 async def test_create_agent_sets_default_compaction_model_anthropic(server: SyncServer, default_user):
     """When no compaction_settings provided for Anthropic agent, default haiku model should be set."""
     from letta.schemas.agent import CreateAgent
