@@ -1378,12 +1378,59 @@ class AnthropicClient(LLMClientBase):
         return messages
 
 
+_CLAUDE_MODEL_RE = re.compile(
+    r"^claude-(?P<family>opus|sonnet|haiku)-(?P<major>\d+)(?:-(?P<minor>\d+))?(?:-.*)?$"
+)
+
+
+def _parse_claude_version(model: str) -> tuple[str, int, int] | None:
+    """Parse a Claude model id into (family, major, minor).
+
+    Examples:
+      "claude-opus-4-8"            -> ("opus",   4, 8)
+      "claude-opus-4-8-20260528"   -> ("opus",   4, 8)
+      "claude-opus-5"              -> ("opus",   5, 0)
+      "claude-sonnet-4-6"          -> ("sonnet", 4, 6)
+      "claude-haiku-4-5"           -> ("haiku",  4, 5)
+      "claude-3-7-sonnet-20250219" -> None   (pre-4 naming scheme, unsupported here)
+      "gpt-4"                      -> None
+      ""                           -> None
+
+    Returns None on any string we don't recognise as a modern Claude 4+ id.
+    Minor version defaults to 0 when absent (e.g. "claude-opus-5" -> minor=0).
+    """
+    if not isinstance(model, str):
+        return None
+    m = _CLAUDE_MODEL_RE.match(model)
+    if not m:
+        return None
+    minor_str = m.group("minor")
+    return (m.group("family"), int(m.group("major")), int(minor_str) if minor_str is not None else 0)
+
+
+def _claude_at_least(model: str, *, family: str, major: int, minor: int) -> bool:
+    """Return True iff `model` is the given Claude family at >= (major, minor).
+
+    Used to gate behavior on minor version thresholds without hardcoding each
+    new minor release (4.7, 4.8, 4.9, ...) the moment Anthropic ships it.
+    """
+    parsed = _parse_claude_version(model)
+    if parsed is None:
+        return False
+    f, maj, min_ = parsed
+    if f != family:
+        return False
+    return (maj, min_) >= (major, minor)
+
+
 def _uses_adaptive_thinking(model: str) -> bool:
-    """Check if the model uses adaptive thinking (type: adaptive) vs legacy extended thinking (type: enabled)."""
-    return (
-        model.startswith("claude-opus-4-6")
-        or model.startswith("claude-opus-4-7")
-        or model.startswith("claude-sonnet-4-6")
+    """Check if the model uses adaptive thinking (type: adaptive) vs legacy extended thinking (type: enabled).
+
+    Adaptive thinking is supported on Opus 4.6+ and Sonnet 4.6+. Future minor
+    versions and Opus 5+ inherit it automatically.
+    """
+    return _claude_at_least(model, family="opus", major=4, minor=6) or _claude_at_least(
+        model, family="sonnet", major=4, minor=6
     )
 
 
@@ -1391,32 +1438,44 @@ def _is_ga_adaptive(model: str) -> bool:
     """Check if the model uses GA adaptive thinking (no beta header needed).
 
     Opus 4.7+ has adaptive thinking as a GA feature — no beta headers required.
-    Opus 4.6 and Sonnet 4.6 still need the adaptive-thinking beta header.
+    Opus 4.6 and Sonnet 4.6 still need the adaptive-thinking-2026-01-28 beta
+    header. Future Opus minor versions (4.8, 4.9, 5.x) inherit GA status.
     """
-    return model.startswith("claude-opus-4-7")
+    return _claude_at_least(model, family="opus", major=4, minor=7)
 
 
 def _rejects_sampling_params(model: str) -> bool:
     """Check if the model rejects non-default temperature/top_p/top_k (returns 400).
 
-    Opus 4.7+ does not accept any sampling parameters.
+    Opus 4.7+ does not accept any sampling parameters. Future Opus minor
+    versions inherit this constraint. Confirmed for Opus 4.8 in Anthropic's
+    "What's new" doc: setting temperature/top_p/top_k returns 400.
     """
-    return model.startswith("claude-opus-4-7")
+    return _claude_at_least(model, family="opus", major=4, minor=7)
 
 
 def _supports_effort(model: str) -> bool:
-    """Check if the model supports the effort parameter (via output_config)."""
-    return (
-        model.startswith("claude-opus-4-5")
-        or model.startswith("claude-opus-4-6")
-        or model.startswith("claude-opus-4-7")
-        or model.startswith("claude-sonnet-4-6")
+    """Check if the model supports the effort parameter (via output_config).
+
+    Effort is supported on Opus 4.5+ and Sonnet 4.6+. Future minor versions
+    inherit support.
+    """
+    return _claude_at_least(model, family="opus", major=4, minor=5) or _claude_at_least(
+        model, family="sonnet", major=4, minor=6
     )
 
 
 def _needs_effort_beta(model: str) -> bool:
-    """Check if effort requires a beta header. GA on Opus 4.7+, beta on earlier models."""
-    return _supports_effort(model) and not model.startswith("claude-opus-4-7")
+    """Check if effort requires a beta header.
+
+    GA on Opus 4.7+ (no beta header). Still behind the effort-2025-11-24 beta
+    header on Opus 4.5/4.6 and Sonnet 4.6. Sonnet 4.7+ would also be GA when
+    it ships; the current Sonnet 4.6 case keeps the beta until then.
+    """
+    if not _supports_effort(model):
+        return False
+    # Opus 4.7+ -> GA. Other supported models still need beta.
+    return not _claude_at_least(model, family="opus", major=4, minor=7)
 
 
 def _supports_structured_outputs(model: str) -> bool:
